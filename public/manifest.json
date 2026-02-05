@@ -1,0 +1,75 @@
+{
+    "name": "DevDesk",
+    "short_name": "DevDesk",
+    "description": "Fast JSON Viewer, Diff Checker & Data Converter - 100% Local & Private",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#f8fafc",
+    "theme_color": "#4f46e5",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/devdesk-icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/pwa-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "/pwa-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ],
+    "categories": [
+        "productivity",
+        "utilities",
+        "developer tools"
+    ],
+    "shortcuts": [
+        {
+            "name": "JSON Viewer",
+            "short_name": "JSON",
+            "description": "View large JSON files",
+            "url": "/app/json-viewer",
+            "icons": [
+                {
+                    "src": "/devdesk-icon.svg",
+                    "sizes": "96x96"
+                }
+            ]
+        },
+        {
+            "name": "Diff Checker",
+            "short_name": "Diff",
+            "description": "Compare files",
+            "url": "/app/diff-checker",
+            "icons": [
+                {
+                    "src": "/devdesk-icon.svg",
+                    "sizes": "96x96"
+                }
+            ]
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "/screenshot-desktop.png",
+            "sizes": "1280x720",
+            "type": "image/png",
+            "form_factor": "wide"
+        },
+        {
+            "src": "/screenshot-mobile.png",
+            "sizes": "750x1334",
+            "type": "image/png",
+            "form_factor": "narrow"
+        }
+    ]
+}

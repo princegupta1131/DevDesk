@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Desk surface -->
+  <path d="M12 28 L52 28 L52 36 L12 36 Z" fill="#2D3748" stroke="#2D3748" stroke-width="2"/>
+  
+  <!-- Desk legs -->
+  <rect x="14" y="36" width="4" height="16" fill="#2D3748"/>
+  <rect x="46" y="36" width="4" height="16" fill="#2D3748"/>
+  
+  <!-- Code brackets (floating above desk) -->
+  <path d="M24 14 L20 18 L24 22" stroke="#0EA5E9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M40 14 L44 18 L40 22" stroke="#0EA5E9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- Data symbol (small square on desk) -->
+  <rect x="38" y="30" width="4" height="4" fill="#0EA5E9"/>
+</svg>
