@@ -1,15 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+
 import { Logo } from '../../components/Logo';
 
 const EnhancedLandingPage: React.FC = () => {
     // Keep FAQ logic alive for the new design
-    const [openFaq, setOpenFaq] = useState<number | null>(null);
 
-    const toggleFaq = (index: number) => {
-        setOpenFaq(openFaq === index ? null : index);
-    };
+
+
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-50 via-slate-50 to-blue-50/30 font-sans text-gray-900">

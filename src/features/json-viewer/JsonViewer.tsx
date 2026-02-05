@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     Upload,
     FileJson,
@@ -13,7 +13,7 @@ import {
 import Editor from '@monaco-editor/react';
 import { WorkerManager } from '../../utils/WorkerManager';
 import VirtualizedJsonTree from '../../components/VirtualizedJsonTree';
-import type { JsonNode, ParseError } from '../../types/json';
+import type { ParseError } from '../../types/json';
 import { formatFileSize } from '../../utils/jsonUtils';
 import { useAppStore } from '../../store/AppContext';
 
