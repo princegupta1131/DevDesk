@@ -70,7 +70,7 @@ const JsonCsvConverter: React.FC = () => {
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
             workerRef.current = new WorkerManager<CsvConversionRequest, any>(
-                new URL('../../workers/csv.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/csv.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);

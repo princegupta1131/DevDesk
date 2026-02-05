@@ -31,7 +31,7 @@ const WordPdfConverter: React.FC = () => {
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
             workerRef.current = new WorkerManager<WordPdfRequest, WordPdfResponse>(
-                new URL('../../workers/wordPdf.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/wordPdf.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);

@@ -26,12 +26,12 @@ const ExcelCsvConverter: React.FC = () => {
     const initWorkers = useCallback(() => {
         if (!excelWorkerRef.current) {
             excelWorkerRef.current = new WorkerManager(
-                new URL('../../workers/excel.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/excel.worker.ts', import.meta.url), { type: 'module' })
             );
         }
         if (!csvWorkerRef.current) {
             csvWorkerRef.current = new WorkerManager(
-                new URL('../../workers/csv.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/csv.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);

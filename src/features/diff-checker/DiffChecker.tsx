@@ -72,7 +72,7 @@ const DiffChecker: React.FC = () => {
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
             workerRef.current = new WorkerManager<DiffRequest, DiffResult>(
-                new URL('../../workers/diff.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/diff.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);

@@ -54,10 +54,10 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
     private messageHandlers: Map<string, (response: TResponse) => void>;
     private errorHandlers: Map<string, (error: string) => void>;
     private messageId = 0;
-    private workerUrl: URL;
+    private workerFactory: () => Worker;
 
-    constructor(workerUrl: URL) {
-        this.workerUrl = workerUrl;
+    constructor(workerFactory: () => Worker) {
+        this.workerFactory = workerFactory;
         this.messageHandlers = new Map();
         this.errorHandlers = new Map();
     }
@@ -70,7 +70,7 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
     init(): void {
         if (this.worker) return;
 
-        this.worker = new Worker(this.workerUrl, { type: 'module' });
+        this.worker = this.workerFactory();
 
         this.worker.onmessage = (e: MessageEvent<WorkerResponse<TResponse>>) => {
             const { type, payload, id, error } = e.data;

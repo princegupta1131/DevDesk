@@ -71,7 +71,7 @@ const JsonExcelConverter: React.FC = () => {
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
             workerRef.current = new WorkerManager<ExcelConversionRequest, ExcelConversionResponse>(
-                new URL('../../workers/excel.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/excel.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);

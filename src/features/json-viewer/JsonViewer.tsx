@@ -64,7 +64,7 @@ const JsonViewer: React.FC = () => {
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
             workerRef.current = new WorkerManager<any, any>(
-                new URL('../../workers/jsonParser.worker.ts', import.meta.url)
+                () => new Worker(new URL('../../workers/jsonParser.worker.ts', import.meta.url), { type: 'module' })
             );
         }
     }, []);
