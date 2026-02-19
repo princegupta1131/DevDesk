@@ -118,6 +118,14 @@ interface ExcelCsvState {
     isParsing: boolean;
 }
 
+type GlobalTaskState = 'idle' | 'running' | 'done' | 'cancelled' | 'error';
+
+interface GlobalTaskStatus {
+    state: GlobalTaskState;
+    label: string;
+    updatedAt: number;
+}
+
 /**
  * Global application state container.
  * 
@@ -131,6 +139,7 @@ interface AppState {
     jsonCsv: JsonCsvState;
     wordPdf: WordPdfState;
     excelCsv: ExcelCsvState;
+    taskStatus: GlobalTaskStatus;
 }
 
 /**
@@ -158,6 +167,7 @@ interface AppContextType {
     setJsonCsv: (data: Partial<JsonCsvState>) => void;
     setWordPdf: (data: Partial<WordPdfState>) => void;
     setExcelCsv: (data: Partial<ExcelCsvState>) => void;
+    setTaskStatus: (data: Partial<GlobalTaskStatus>) => void;
 }
 
 const initialJsonViewer: JsonViewerState = {
@@ -238,6 +248,12 @@ const initialExcelCsv: ExcelCsvState = {
     isParsing: false,
 };
 
+const initialTaskStatus: GlobalTaskStatus = {
+    state: 'idle',
+    label: '',
+    updatedAt: Date.now(),
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -247,6 +263,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [jsonCsv, setJsonCsvState] = useState<JsonCsvState>(initialJsonCsv);
     const [wordPdf, setWordPdfState] = useState<WordPdfState>(initialWordPdf);
     const [excelCsv, setExcelCsvState] = useState<ExcelCsvState>(initialExcelCsv);
+    const [taskStatus, setTaskStatusState] = useState<GlobalTaskStatus>(initialTaskStatus);
 
     const setJsonViewer = React.useCallback((data: Partial<JsonViewerState>) =>
         setJsonViewerState(prev => ({ ...prev, ...data })), []);
@@ -266,15 +283,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const setExcelCsv = React.useCallback((data: Partial<ExcelCsvState>) =>
         setExcelCsvState(prev => ({ ...prev, ...data })), []);
 
+    const setTaskStatus = React.useCallback((data: Partial<GlobalTaskStatus>) =>
+        setTaskStatusState(prev => ({ ...prev, ...data, updatedAt: Date.now() })), []);
+
     const value = React.useMemo(() => ({
-        state: { jsonViewer, diffChecker, jsonExcel, jsonCsv, wordPdf, excelCsv },
+        state: { jsonViewer, diffChecker, jsonExcel, jsonCsv, wordPdf, excelCsv, taskStatus },
         setJsonViewer,
         setDiffChecker,
         setJsonExcel,
         setJsonCsv,
         setWordPdf,
         setExcelCsv,
-    }), [jsonViewer, diffChecker, jsonExcel, jsonCsv, wordPdf, excelCsv]);
+        setTaskStatus,
+    }), [jsonViewer, diffChecker, jsonExcel, jsonCsv, wordPdf, excelCsv, taskStatus]);
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

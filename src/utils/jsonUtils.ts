@@ -1,4 +1,5 @@
 import type { JsonValue, JsonNode } from '../types/json';
+import { logger } from './logger';
 
 export const getValueType = (
     value: JsonValue
@@ -25,7 +26,7 @@ export const buildJsonTree = (
         return rootNode;
     }
 
-    const stack: { node: JsonNode; data: any }[] = [{ node: rootNode, data }];
+    const stack: { node: JsonNode; data: JsonValue }[] = [{ node: rootNode, data }];
 
     while (stack.length > 0) {
         const { node, data: currentData } = stack.pop()!;
@@ -103,7 +104,7 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
         await navigator.clipboard.writeText(text);
         return true;
     } catch (error) {
-        console.error('Failed to copy to clipboard:', error);
+        logger.error('Failed to copy to clipboard:', error);
         return false;
     }
 };
@@ -115,7 +116,7 @@ export const formatFileSize = (bytes: number): string => {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 };
-export const deepSortKeys = (obj: any): any => {
+export const deepSortKeys = (obj: unknown): unknown => {
     if (obj === null || typeof obj !== 'object') {
         return obj;
     }
@@ -125,9 +126,10 @@ export const deepSortKeys = (obj: any): any => {
     }
 
     const sortedKeys = Object.keys(obj).sort();
-    const result: any = {};
+    const result: Record<string, unknown> = {};
+    const source = obj as Record<string, unknown>;
     for (const key of sortedKeys) {
-        result[key] = deepSortKeys(obj[key]);
+        result[key] = deepSortKeys(source[key]);
     }
     return result;
 };

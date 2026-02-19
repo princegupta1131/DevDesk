@@ -1,4 +1,5 @@
 import type { WorkerMessage, WorkerResponse } from '../types/worker';
+import { logger } from './logger';
 
 /**
  * Type-safe Web Worker wrapper for offloading heavy computations.
@@ -55,6 +56,7 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
     private errorHandlers: Map<string, (error: string) => void>;
     private messageId = 0;
     private workerFactory: () => Worker;
+    private static readonly CANCELLED_MESSAGE = 'Operation cancelled';
 
     constructor(workerFactory: () => Worker) {
         this.workerFactory = workerFactory;
@@ -62,7 +64,7 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
         this.errorHandlers = new Map();
     }
 
-    private progressHandlers: Map<string, (data: any) => void> = new Map();
+    private progressHandlers: Map<string, (data: unknown) => void> = new Map();
 
     /**
      * Initialize the worker
@@ -102,7 +104,7 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
         };
 
         this.worker.onerror = (error) => {
-            console.error('Worker error:', error);
+            logger.error('Worker error:', error);
         };
     }
 
@@ -153,7 +155,7 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
         payload: TRequest,
         transfer?: Transferable[],
         debounceMs: number = 0,
-        onProgress?: (data: any) => void
+        onProgress?: (data: unknown) => void
     ): Promise<TResponse> {
         this.init();
 
@@ -181,11 +183,38 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
         return this.executePostMessage(type, payload, transfer, onProgress);
     }
 
+    static isCancelledError(error: unknown): boolean {
+        if (typeof error === 'string') {
+            return error.toLowerCase().includes('cancel');
+        }
+        if (error instanceof Error) {
+            return error.message.toLowerCase().includes('cancel');
+        }
+        return false;
+    }
+
+    /**
+     * Cancel all in-flight work and clear pending debounced tasks.
+     * This terminates the active worker to immediately stop heavy computation.
+     */
+    cancelAll(reason: string = WorkerManager.CANCELLED_MESSAGE): void {
+        this.debounceTimers.forEach((timerId) => clearTimeout(timerId));
+        this.debounceTimers.clear();
+
+        this.errorHandlers.forEach((reject) => reject(reason));
+        this.errorHandlers.clear();
+        this.messageHandlers.clear();
+        this.progressHandlers.clear();
+
+        this.worker?.terminate();
+        this.worker = null;
+    }
+
     private executePostMessage(
         type: string,
         payload: TRequest,
         transfer?: Transferable[],
-        onProgress?: (data: any) => void
+        onProgress?: (data: unknown) => void
     ): Promise<TResponse> {
         return new Promise((resolve, reject) => {
             const id = `${type}-${this.messageId++}`;
@@ -224,9 +253,6 @@ export class WorkerManager<TRequest = unknown, TResponse = unknown> {
      * ```
      */
     terminate(): void {
-        this.worker?.terminate();
-        this.worker = null;
-        this.messageHandlers.clear();
-        this.errorHandlers.clear();
+        this.cancelAll(WorkerManager.CANCELLED_MESSAGE);
     }
 }

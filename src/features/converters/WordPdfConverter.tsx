@@ -1,11 +1,12 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     Download,
     Loader2,
     Trash2,
     AlertCircle,
     ArrowRightLeft,
-    FileDigit
+    FileDigit,
+    XCircle
 } from 'lucide-react';
 import { WorkerManager } from '../../utils/WorkerManager';
 import FileUploader from '../../components/FileUploader';
@@ -15,7 +16,7 @@ import { useAppStore } from '../../store/AppContext';
 type ConversionMode = 'word-to-pdf' | 'pdf-to-word';
 
 const WordPdfConverter: React.FC = () => {
-    const { state, setWordPdf } = useAppStore();
+    const { state, setWordPdf, setTaskStatus } = useAppStore();
     const { file, mode, success } = state.wordPdf;
 
     const [isLoading, setIsLoading] = useState(false);
@@ -36,6 +37,13 @@ const WordPdfConverter: React.FC = () => {
         }
     }, []);
 
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+            workerRef.current = null;
+        };
+    }, []);
+
     const handleFileSelect = (selectedFile: File) => {
         setFile(selectedFile);
         setError(null);
@@ -43,6 +51,7 @@ const WordPdfConverter: React.FC = () => {
     };
 
     const handleClear = () => {
+        workerRef.current?.cancelAll('Cleared by user');
         setFile(null);
         setError(null);
         setSuccess(false);
@@ -57,6 +66,8 @@ const WordPdfConverter: React.FC = () => {
         setIsLoading(true);
         setError(null);
         setSuccess(false);
+        setTaskStatus({ state: 'running', label: mode === 'word-to-pdf' ? 'Converting to PDF' : 'Converting to Word' });
+        workerRef.current?.cancelAll('Superseded by a newer conversion request');
         initWorker();
 
         try {
@@ -79,8 +90,11 @@ const WordPdfConverter: React.FC = () => {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
             setSuccess(true);
+            setTaskStatus({ state: 'done', label: 'Conversion complete' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(err instanceof Error ? err.message : 'Conversion failed');
+            setTaskStatus({ state: 'error', label: 'Conversion failed' });
         } finally {
             setIsLoading(false);
         }
@@ -90,6 +104,12 @@ const WordPdfConverter: React.FC = () => {
         setMode(mode === 'word-to-pdf' ? 'pdf-to-word' : 'word-to-pdf');
         handleClear();
     };
+
+    const handleCancelCurrentTask = useCallback(() => {
+        workerRef.current?.cancelAll('Cancelled by user');
+        setIsLoading(false);
+        setTaskStatus({ state: 'cancelled', label: 'Operation cancelled' });
+    }, [setTaskStatus]);
 
     return (
         <div className="h-full flex flex-col space-y-6">
@@ -113,6 +133,12 @@ const WordPdfConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
+                    {isLoading && (
+                        <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
+                            <XCircle className="w-4 h-4 text-red-500" />
+                            <span className="text-sm font-bold">Cancel</span>
+                        </button>
+                    )}
                     <button
                         onClick={handleConvert}
                         disabled={isLoading || !file}

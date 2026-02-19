@@ -1,5 +1,6 @@
 import React, { Component, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { logger } from '../utils/logger';
 
 interface ErrorBoundaryProps {
     children: ReactNode;
@@ -35,13 +36,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         };
     }
 
-    static getDerivedStateFromError(_error: Error): Partial<ErrorBoundaryState> {
+    static getDerivedStateFromError(): Partial<ErrorBoundaryState> {
         return { hasError: true };
     }
 
     componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
         // Log error details for debugging
-        console.error('ErrorBoundary caught an error:', error, errorInfo);
+        logger.error('ErrorBoundary caught an error:', error, errorInfo);
 
         this.setState({
             error,

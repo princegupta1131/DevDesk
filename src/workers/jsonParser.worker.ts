@@ -116,6 +116,56 @@ const findSearchMatches = (node: JsonNode, query: string, expandedPaths: Set<str
     return keyMatch || valueMatch || hasChildMatch;
 };
 
+/**
+ * Strips single-line // comments from JSON string
+ * Preserves // inside string literals
+ */
+const stripComments = (jsonString: string): string => {
+    let result = '';
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < jsonString.length; i++) {
+        const char = jsonString[i];
+        const nextChar = jsonString[i + 1];
+
+        // Handle escape sequences
+        if (escapeNext) {
+            result += char;
+            escapeNext = false;
+            continue;
+        }
+
+        if (char === '\\' && inString) {
+            result += char;
+            escapeNext = true;
+            continue;
+        }
+
+        // Toggle string state
+        if (char === '"' && !escapeNext) {
+            inString = !inString;
+            result += char;
+            continue;
+        }
+
+        // Skip // comments outside strings
+        if (!inString && char === '/' && nextChar === '/') {
+            // Skip until end of line
+            while (i < jsonString.length && jsonString[i] !== '\n') {
+                i++;
+            }
+            continue;
+        }
+
+        result += char;
+    }
+
+    return result;
+};
+
+let lastParsedTree: JsonNode | null = null;
+
 self.onmessage = async (e: MessageEvent<WorkerMessage<any>>) => {
     const { type, payload, id } = e.data;
 
@@ -130,7 +180,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage<any>>) => {
                 jsonString = data;
             }
 
-            const parsed = JSON.parse(jsonString);
+            // Strip comments before parsing
+            const cleanedJson = stripComments(jsonString);
+            const parsed = JSON.parse(cleanedJson);
 
             // Pass progress callback
             const tree = await buildJsonTree(parsed, 'root', (count) => {
@@ -140,6 +192,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage<any>>) => {
                     id
                 });
             });
+            lastParsedTree = tree;
 
             const response: WorkerResponse = {
                 type: 'PARSE_SUCCESS',
@@ -148,7 +201,17 @@ self.onmessage = async (e: MessageEvent<WorkerMessage<any>>) => {
             };
             self.postMessage(response);
         } else if (type === 'SEARCH_JSON') {
-            const { tree, query } = payload;
+            const query = typeof payload === 'string' ? payload : payload?.query;
+            const tree = lastParsedTree || payload?.tree;
+            if (!tree || !query) {
+                const response: WorkerResponse = {
+                    type: 'SEARCH_SUCCESS',
+                    payload: { paths: [], count: 0 },
+                    id,
+                };
+                self.postMessage(response);
+                return;
+            }
             const expandedPaths = new Set<string>();
             const counter = { count: 0 };
             findSearchMatches(tree as JsonNode, query, expandedPaths, counter);

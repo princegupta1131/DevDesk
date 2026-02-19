@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
     useReactTable,
     getCoreRowModel,
@@ -23,6 +23,7 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
     data: initialData,
     onDataChange,
     onHeaderChange,
+    maxRows,
     isEditable = true,
 }) => {
     const [data, setData] = useState<any[]>(initialData);
@@ -30,6 +31,8 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
     const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
     const [editingHeader, setEditingHeader] = useState<string | null>(null);
     const [headerValue, setHeaderValue] = useState<string>('');
+    const [scrollTop, setScrollTop] = useState(0);
+    const [viewportHeight, setViewportHeight] = useState(640);
 
     const parentRef = useRef<HTMLDivElement>(null);
 
@@ -38,13 +41,18 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
         setData(initialData);
     }, [initialData]);
 
+    const effectiveData = useMemo(() => {
+        if (!maxRows || data.length <= maxRows) return data;
+        return data.slice(0, maxRows);
+    }, [data, maxRows]);
+
     // Extract headers from data
     const headers = useMemo(() => {
-        if (!data || !Array.isArray(data) || data.length === 0) return [];
+        if (!effectiveData || !Array.isArray(effectiveData) || effectiveData.length === 0) return [];
         return Array.from(
-            new Set(data.flatMap(item => (typeof item === 'object' && item !== null ? Object.keys(item) : [])))
+            new Set(effectiveData.flatMap(item => (typeof item === 'object' && item !== null ? Object.keys(item) : [])))
         );
-    }, [data]);
+    }, [effectiveData]);
 
     // Handle cell change
     const handleCellChange = (rowIndex: number, columnId: string, value: string) => {
@@ -86,15 +94,6 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
         setData(newData);
         onDataChange?.(newData);
     };
-
-    // Auto-resize textarea on mount/change
-    const adjustTextareaHeight = (element: HTMLTextAreaElement) => {
-        element.style.height = 'auto';
-        element.style.height = `${element.scrollHeight}px`;
-    };
-
-    // Ref to store textarea elements
-    const textareaRefs = React.useRef<{ [key: string]: HTMLTextAreaElement | null }>({});
 
     // Define columns
     const columns = useMemo<ColumnDef<any>[]>(() => {
@@ -154,27 +153,16 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
                 cell: ({ getValue, row, column }) => {
                     const value = getValue();
                     const displayValue = value === null ? 'null' : (typeof value === 'object' ? JSON.stringify(value) : String(value ?? ''));
-                    const cellId = `${row.id}_${column.id}`;
 
                     return (
-                        <div className="flex items-start group/cell w-full py-1">
+                        <div className="flex items-start group/cell w-full">
                             {isEditable ? (
                                 <>
-                                    <textarea
-                                        ref={el => {
-                                            if (el) {
-                                                textareaRefs.current[cellId] = el;
-                                                adjustTextareaHeight(el);
-                                            }
-                                        }}
+                                    <input
+                                        type="text"
                                         value={displayValue}
-                                        onChange={(e) => {
-                                            handleCellChange(row.index, column.id, e.target.value);
-                                            adjustTextareaHeight(e.target);
-                                        }}
-                                        className="w-full bg-transparent border-none focus:ring-0 rounded-lg px-2 py-1 -mx-2 transition-all hover:bg-white hover:shadow-sm resize-none overflow-hidden min-h-[32px]"
-                                        rows={1}
-                                        style={{ height: 'auto' }}
+                                        onChange={(e) => handleCellChange(row.index, column.id, e.target.value)}
+                                        className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-white focus:shadow-sm rounded-lg px-2 py-1.5 -mx-2 transition-all min-h-[34px]"
                                     />
                                     <Edit3 className="w-3 h-3 text-indigo-400 opacity-0 group-hover/cell:opacity-100 absolute right-2 top-3 pointer-events-none" />
                                 </>
@@ -212,7 +200,7 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
 
     // Create table instance
     const table = useReactTable({
-        data,
+        data: effectiveData,
         columns,
         state: {
             sorting,
@@ -232,6 +220,32 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
         },
     });
 
+    const ROW_HEIGHT = isEditable ? 52 : 44;
+    const OVERSCAN_ROWS = 12;
+    const allRows = table.getRowModel().rows;
+    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
+    const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN_ROWS * 2;
+    const endIndex = Math.min(allRows.length, startIndex + visibleCount);
+    const visibleRows = allRows.slice(startIndex, endIndex);
+    const topSpacerHeight = startIndex * ROW_HEIGHT;
+    const bottomSpacerHeight = Math.max(0, (allRows.length - endIndex) * ROW_HEIGHT);
+
+    useEffect(() => {
+        const parent = parentRef.current;
+        if (!parent) return;
+
+        setViewportHeight(parent.clientHeight);
+        const observer = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (!entry) return;
+            const nextHeight = entry.contentRect.height;
+            setViewportHeight((prev) => (Math.abs(prev - nextHeight) > 1 ? nextHeight : prev));
+        });
+
+        observer.observe(parent);
+        return () => observer.disconnect();
+    }, []);
+
     if (!data || !Array.isArray(data)) {
         return (
             <div className="h-full flex items-center justify-center text-gray-400 italic font-medium">
@@ -244,72 +258,83 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
         <div className="w-full h-full flex flex-col overflow-hidden bg-white/50 backdrop-blur-md border border-gray-100/50">
             <div
                 ref={parentRef}
-                className="flex-1 overflow-auto relative w-full"
+                onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+                className="flex-1 overflow-x-auto overflow-y-auto relative w-full custom-scrollbar"
                 style={{ WebkitOverflowScrolling: 'touch' }}
             >
-                <div style={{ minWidth: '100%', width: table.getTotalSize(), display: 'block' }}>
-                    <table
-                        className="w-full border-collapse text-sm table-fixed bg-white"
-                    >
-                        <thead className="sticky top-0 z-30 bg-gray-50 border-b-2 border-gray-200 shadow-sm">
-                            {table.getHeaderGroups().map(headerGroup => (
-                                <tr key={headerGroup.id}>
-                                    {headerGroup.headers.map(header => (
-                                        <th
-                                            key={header.id}
-                                            className="px-3 py-2 text-left text-xs font-bold text-gray-700 uppercase tracking-wider border-r border-gray-200 last:border-r-0 relative select-none"
-                                            style={{ width: header.getSize() }}
+                <table
+                    className="border-collapse text-sm bg-white"
+                    style={{ width: table.getTotalSize(), minWidth: '100%' }}
+                >
+                    <thead className="sticky top-0 z-30 bg-gray-50 border-b-2 border-gray-200 shadow-sm">
+                        {table.getHeaderGroups().map(headerGroup => (
+                            <tr key={headerGroup.id}>
+                                {headerGroup.headers.map(header => (
+                                    <th
+                                        key={header.id}
+                                        className="px-3 py-2 text-left text-xs font-bold text-gray-700 uppercase tracking-wider border-r border-gray-200 last:border-r-0 relative select-none"
+                                        style={{ width: header.getSize(), minWidth: header.getSize() }}
+                                    >
+                                        <div
+                                            className={header.column.getCanSort() ? 'cursor-pointer select-none flex items-center gap-2' : ''}
+                                            onClick={header.column.getToggleSortingHandler()}
                                         >
-                                            <div
-                                                className={header.column.getCanSort() ? 'cursor-pointer select-none flex items-center gap-2' : ''}
-                                                onClick={header.column.getToggleSortingHandler()}
-                                            >
-                                                {flexRender(header.column.columnDef.header, header.getContext())}
-                                                {header.column.getCanSort() && (
-                                                    <span className="text-gray-400">
-                                                        {header.column.getIsSorted() === 'asc' ? (
-                                                            <ArrowUp className="w-3 h-3" />
-                                                        ) : header.column.getIsSorted() === 'desc' ? (
-                                                            <ArrowDown className="w-3 h-3" />
-                                                        ) : (
-                                                            <ChevronsUpDown className="w-3 h-3 opacity-50" />
-                                                        )}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div
-                                                onMouseDown={header.getResizeHandler()}
-                                                onTouchStart={header.getResizeHandler()}
-                                                className={`absolute right-0 top-0 h-full w-1 bg-gray-300 cursor-col-resize hover:bg-indigo-500 opacity-0 group-hover/header:opacity-100 transition-opacity ${header.column.getIsResizing() ? 'bg-indigo-600 opacity-100' : ''
-                                                    }`}
-                                            />
-                                        </th>
-                                    ))}
-                                </tr>
-                            ))}
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {table.getRowModel().rows.map(row => (
-                                <tr
-                                    key={row.id}
-                                    className="hover:bg-indigo-50/30 transition-colors group/row even:bg-slate-50/40"
-                                >
-                                    {row.getVisibleCells().map(cell => (
-                                        <td
-                                            key={cell.id}
-                                            className="px-3 py-2 text-gray-700 font-normal relative align-top border-r border-gray-200 last:border-r-0"
-                                            style={{ width: cell.column.getSize() }}
-                                        >
-                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                        </td>
-                                    ))}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                                            {flexRender(header.column.columnDef.header, header.getContext())}
+                                            {header.column.getCanSort() && (
+                                                <span className="text-gray-400">
+                                                    {header.column.getIsSorted() === 'asc' ? (
+                                                        <ArrowUp className="w-3 h-3" />
+                                                    ) : header.column.getIsSorted() === 'desc' ? (
+                                                        <ArrowDown className="w-3 h-3" />
+                                                    ) : (
+                                                        <ChevronsUpDown className="w-3 h-3 opacity-50" />
+                                                    )}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div
+                                            onMouseDown={header.getResizeHandler()}
+                                            onTouchStart={header.getResizeHandler()}
+                                            className={`absolute right-0 top-0 h-full w-1 bg-gray-300 cursor-col-resize hover:bg-indigo-500 opacity-0 group-hover/header:opacity-100 transition-opacity ${header.column.getIsResizing() ? 'bg-indigo-600 opacity-100' : ''
+                                                }`}
+                                        />
+                                    </th>
+                                ))}
+                            </tr>
+                        ))}
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {topSpacerHeight > 0 && (
+                            <tr aria-hidden="true">
+                                <td colSpan={table.getAllLeafColumns().length} style={{ height: topSpacerHeight, padding: 0, border: 0 }} />
+                            </tr>
+                        )}
+                        {visibleRows.map(row => (
+                            <tr
+                                key={row.id}
+                                className="hover:bg-indigo-50/30 transition-colors group/row even:bg-slate-50/40"
+                                style={{ height: ROW_HEIGHT }}
+                            >
+                                {row.getVisibleCells().map(cell => (
+                                    <td
+                                        key={cell.id}
+                                        className="px-3 py-2 text-gray-700 font-normal relative align-top border-r border-gray-200 last:border-r-0"
+                                        style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                                    >
+                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                        {bottomSpacerHeight > 0 && (
+                            <tr aria-hidden="true">
+                                <td colSpan={table.getAllLeafColumns().length} style={{ height: bottomSpacerHeight, padding: 0, border: 0 }} />
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
 
-                {data.length === 0 && (
+                {effectiveData.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-20 space-y-4">
                         <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center border border-dashed border-gray-200">
                             <Plus className="w-6 h-6 text-gray-300" />
@@ -332,7 +357,7 @@ const TanStackDataTable: React.FC<TanStackDataTableProps> = ({
                     <div className="flex items-center space-x-4">
                         <div className="h-4 w-px bg-gray-200" />
                         <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                            {table.getRowModel().rows.length} {table.getRowModel().rows.length === 1 ? 'Row' : 'Rows'} • {headers.length} {headers.length === 1 ? 'Column' : 'Columns'}
+                            {allRows.length} {allRows.length === 1 ? 'Row' : 'Rows'} • {headers.length} {headers.length === 1 ? 'Column' : 'Columns'}
                         </span>
                     </div>
                 </div>

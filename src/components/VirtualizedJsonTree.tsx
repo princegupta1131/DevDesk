@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Copy, Check, Settings, ArrowRightLeft } from 'lucide-react';
+import { ChevronDown, Check, FolderTree, Clipboard, Key } from 'lucide-react';
 import type { JsonNode } from '../types/json';
 import { copyToClipboard } from '../utils/jsonUtils';
 
@@ -227,7 +227,7 @@ const VirtualizedJsonTree: React.FC<VirtualizedJsonTreeProps> = ({
                     return (
                         <div
                             key={path}
-                            className="absolute left-0 w-full flex items-center group hover:bg-indigo-50/30 px-2 rounded-lg transition-colors font-mono text-xs border border-transparent hover:border-indigo-100/30 will-change-transform"
+                            className="absolute left-0 min-w-full w-max flex items-center group hover:bg-indigo-50/30 px-2 rounded-lg transition-colors font-mono text-xs border border-transparent hover:border-indigo-100/30 will-change-transform"
                             style={{
                                 top: 0,
                                 transform: `translateY(${actualIndex * ROW_HEIGHT}px)`,
@@ -249,34 +249,46 @@ const VirtualizedJsonTree: React.FC<VirtualizedJsonTreeProps> = ({
                                 <span className="text-gray-300 ml-1">:</span>
                             </span>
 
-                            <span className={`${getTypeColor(node.type)} flex-1 whitespace-nowrap`} title={String(node.value)}>
+                            <span className={`${getTypeColor(node.type)} flex-none whitespace-nowrap`}>
                                 {renderValue(node)}
                             </span>
 
-                            <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1 mr-2 shrink-0">
-                                <button
-                                    onClick={() => handleCopy(node.key)}
-                                    title="Copy Key"
-                                    className="p-1 hover:bg-white text-gray-400 hover:text-indigo-600 rounded-lg transition-all"
-                                >
-                                    {copiedPath === node.key ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                </button>
-                                {node.type !== 'null' && (
+                            <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1 mr-2 shrink-0 transition-opacity">
+                                <div className="relative group/tooltip">
                                     <button
-                                        onClick={() => handleCopy(typeof node.value === 'object' ? JSON.stringify(node.value, null, 2) : String(node.value))}
-                                        title="Copy Value"
-                                        className="p-1 hover:bg-white text-gray-400 hover:text-emerald-600 rounded-lg transition-all"
+                                        onClick={() => handleCopy(node.key)}
+                                        className="p-1.5 hover:bg-white text-gray-400 hover:text-indigo-600 rounded-lg transition-all shadow-sm hover:shadow"
                                     >
-                                        {copiedPath === (typeof node.value === 'object' ? JSON.stringify(node.value, null, 2) : String(node.value)) ? <Check className="w-3 h-3" /> : <ArrowRightLeft className="w-3 h-3 rotate-90" />}
+                                        {copiedPath === node.key ? <Check className="w-3.5 h-3.5" /> : <Key className="w-3.5 h-3.5" />}
                                     </button>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-[10px] font-bold rounded whitespace-nowrap opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-opacity z-50">
+                                        Copy Key
+                                    </div>
+                                </div>
+                                {node.type !== 'null' && (
+                                    <div className="relative group/tooltip">
+                                        <button
+                                            onClick={() => handleCopy(typeof node.value === 'object' ? JSON.stringify(node.value, null, 2) : String(node.value))}
+                                            className="p-1.5 hover:bg-white text-gray-400 hover:text-emerald-600 rounded-lg transition-all shadow-sm hover:shadow"
+                                        >
+                                            {copiedPath === (typeof node.value === 'object' ? JSON.stringify(node.value, null, 2) : String(node.value)) ? <Check className="w-3.5 h-3.5" /> : <Clipboard className="w-3.5 h-3.5" />}
+                                        </button>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-[10px] font-bold rounded whitespace-nowrap opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-opacity z-50">
+                                            Copy Value
+                                        </div>
+                                    </div>
                                 )}
-                                <button
-                                    onClick={() => handleCopy(path)}
-                                    title="Copy Path"
-                                    className="p-1 hover:bg-white text-gray-400 hover:text-sky-600 rounded-lg transition-all"
-                                >
-                                    {copiedPath === path ? <Check className="w-3 h-3" /> : <Settings className="w-3 h-3" />}
-                                </button>
+                                <div className="relative group/tooltip">
+                                    <button
+                                        onClick={() => handleCopy(path)}
+                                        className="p-1.5 hover:bg-white text-gray-400 hover:text-sky-600 rounded-lg transition-all shadow-sm hover:shadow"
+                                    >
+                                        {copiedPath === path ? <Check className="w-3.5 h-3.5" /> : <FolderTree className="w-3.5 h-3.5" />}
+                                    </button>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-[10px] font-bold rounded whitespace-nowrap opacity-0 group-hover/tooltip:opacity-100 pointer-events-none transition-opacity z-50">
+                                        Copy Path
+                                    </div>
+                                </div>
                                 <span className="text-[9px] font-black text-gray-300 uppercase ml-1">{node.type}</span>
                             </div>
                         </div>

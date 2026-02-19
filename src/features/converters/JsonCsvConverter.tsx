@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
     Download,
     Loader2,
@@ -8,7 +8,10 @@ import {
     Table as TableIcon,
     Code,
     Eye,
-    ChevronDown
+    ChevronDown,
+    Copy,
+    Check,
+    XCircle
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { WorkerManager } from '../../utils/WorkerManager';
@@ -16,12 +19,13 @@ import FileUploader from '../../components/FileUploader';
 import TanStackDataTable from '../../components/TanStackDataTable';
 import type { CsvConversionRequest } from '../../workers/csv.worker';
 import { useAppStore } from '../../store/AppContext';
+import { copyToClipboard } from '../../utils/jsonUtils';
 
 type ConversionMode = 'json-to-csv' | 'csv-to-json';
 type ViewType = 'json' | 'table';
 
 const JsonCsvConverter: React.FC = () => {
-    const { state, setJsonCsv } = useAppStore();
+    const { state, setJsonCsv, setTaskStatus } = useAppStore();
     const {
         file,
         inputData,
@@ -36,6 +40,7 @@ const JsonCsvConverter: React.FC = () => {
     const [resultData, setResultData] = useState<any>(null);
     const [viewType, setViewType] = useState<ViewType>('table');
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [isJsonCopied, setIsJsonCopied] = useState(false);
 
     // State setters tied to global store
     const setFile = (val: File | null) => setJsonCsv({ file: val });
@@ -50,6 +55,15 @@ const JsonCsvConverter: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isParsing, setIsParsing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const jsonPreviewText = useMemo(() => {
+        if (resultData && mode === 'csv-to-json') {
+            return JSON.stringify(resultData, null, 2);
+        }
+        if (tableData.length > 0) {
+            return JSON.stringify(tableData, null, 2);
+        }
+        return '';
+    }, [resultData, mode, tableData]);
 
     const editorOptions = useMemo(() => ({
         minimap: { enabled: false },
@@ -75,6 +89,13 @@ const JsonCsvConverter: React.FC = () => {
         }
     }, []);
 
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+            workerRef.current = null;
+        };
+    }, []);
+
     const validateAndPreview = useCallback(async () => {
         setError(null);
 
@@ -91,6 +112,8 @@ const JsonCsvConverter: React.FC = () => {
         }
 
         setIsParsing(true);
+        setTaskStatus({ state: 'running', label: 'Preparing preview' });
+        workerRef.current?.cancelAll('Superseded by a newer preview request');
         initWorker();
 
         try {
@@ -132,12 +155,15 @@ const JsonCsvConverter: React.FC = () => {
                 setViewType('table');
 
             }
+            setTaskStatus({ state: 'done', label: 'Preview ready' });
         } catch (e) {
+            if (WorkerManager.isCancelledError(e)) return;
             setError(`Preview failed: ${e instanceof Error ? e.message : 'Invalid data structure'}`);
+            setTaskStatus({ state: 'error', label: 'Preview failed' });
         } finally {
             setIsParsing(false);
         }
-    }, [inputData, file, isDirectMode, flatten, delimiter, initWorker, mode]);
+    }, [inputData, file, isDirectMode, flatten, delimiter, initWorker, mode, setTaskStatus]);
 
     const handleFileSelect = async (selectedFile: File) => {
         setFile(selectedFile);
@@ -162,6 +188,7 @@ const JsonCsvConverter: React.FC = () => {
     };
 
     const handleClear = () => {
+        workerRef.current?.cancelAll('Cleared by user');
         setFile(null);
         setInputData('');
         setTableData([]);
@@ -182,6 +209,8 @@ const JsonCsvConverter: React.FC = () => {
         setIsLoading(true);
         setError(null);
         setShowExportMenu(false);
+        setTaskStatus({ state: 'running', label: `Exporting ${format.toUpperCase()}` });
+        workerRef.current?.cancelAll('Superseded by a newer export request');
 
         try {
             if (format === 'xlsx') {
@@ -222,8 +251,11 @@ const JsonCsvConverter: React.FC = () => {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             }
+            setTaskStatus({ state: 'done', label: 'Export complete' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(`Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+            setTaskStatus({ state: 'error', label: 'Export failed' });
         } finally {
             setIsLoading(false);
         }
@@ -233,6 +265,22 @@ const JsonCsvConverter: React.FC = () => {
         setMode(mode === 'json-to-csv' ? 'csv-to-json' : 'json-to-csv');
         handleClear();
     };
+
+    const handleCopyJson = useCallback(async () => {
+        if (!jsonPreviewText) return;
+        const copied = await copyToClipboard(jsonPreviewText);
+        if (!copied) return;
+        setIsJsonCopied(true);
+        window.setTimeout(() => setIsJsonCopied(false), 1200);
+    }, [jsonPreviewText]);
+
+    const handleCancelCurrentTask = useCallback(() => {
+        workerRef.current?.cancelAll('Cancelled by user');
+        setIsParsing(false);
+        setIsLoading(false);
+        setShowExportMenu(false);
+        setTaskStatus({ state: 'cancelled', label: 'Operation cancelled' });
+    }, [setTaskStatus]);
 
     return (
         <div className="h-full flex flex-col space-y-6">
@@ -279,6 +327,12 @@ const JsonCsvConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
+                    {(isParsing || isLoading) && (
+                        <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
+                            <XCircle className="w-4 h-4 text-red-500" />
+                            <span className="text-sm font-bold">Cancel</span>
+                        </button>
+                    )}
 
                     {/* Export Dropdown */}
                     <div className="relative">
@@ -422,7 +476,7 @@ const JsonCsvConverter: React.FC = () => {
                 </div>
 
                 {/* Right Panel: Viewport */}
-                <div className="flex-1 flex flex-col space-y-4 min-h-0">
+                <div className="flex-1 flex flex-col space-y-4 min-h-0 min-w-0">
                     <div className="flex items-center justify-between px-1">
                         <div>
                             <h2 className="text-xl font-bold text-gray-900 tracking-tight">
@@ -430,22 +484,33 @@ const JsonCsvConverter: React.FC = () => {
                             </h2>
                             <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">Editable Workspace</p>
                         </div>
-                        <div className="bg-gray-100/80 p-1.5 rounded-2xl flex items-center border border-gray-200/50 shadow-inner">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-gray-100/80 p-1.5 rounded-2xl flex items-center border border-gray-200/50 shadow-inner">
+                                <button
+                                    onClick={() => setViewType('table')}
+                                    className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'table' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    <TableIcon className="w-3.5 h-3.5" />
+                                    <span>TABLE</span>
+                                </button>
+                                <button
+                                    onClick={() => setViewType('json')}
+                                    className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'json' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    <Code className="w-3.5 h-3.5" />
+                                    <span>JSON</span>
+                                </button>
+                            </div>
                             <button
-                                onClick={() => setViewType('table')}
-                                className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'table' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
-                                    }`}
+                                onClick={handleCopyJson}
+                                disabled={!jsonPreviewText}
+                                className="btn-secondary h-10 px-4 disabled:opacity-50"
+                                title="Copy transformed JSON"
                             >
-                                <TableIcon className="w-3.5 h-3.5" />
-                                <span>TABLE</span>
-                            </button>
-                            <button
-                                onClick={() => setViewType('json')}
-                                className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'json' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
-                                    }`}
-                            >
-                                <Code className="w-3.5 h-3.5" />
-                                <span>JSON</span>
+                                {isJsonCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                                <span className="text-xs font-bold">{isJsonCopied ? 'Copied' : 'Copy JSON'}</span>
                             </button>
                         </div>
                     </div>
@@ -491,11 +556,7 @@ const JsonCsvConverter: React.FC = () => {
                                             <span>Displaying head (1,000 records) for low-latency scrolling. Export will contain full dataset.</span>
                                         </div>
                                     )}
-                                    {resultData && mode === 'csv-to-json'
-                                        ? JSON.stringify(resultData, null, 2)
-                                        : tableData.length > 0
-                                            ? JSON.stringify(tableData, null, 2)
-                                            : '// No data transformed yet. Use Compute Table to begin.'}
+                                    {jsonPreviewText || '// No data transformed yet. Use Compute Table to begin.'}
                                 </pre>
                             </div>
                         )}

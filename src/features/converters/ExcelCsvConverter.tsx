@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     FileSpreadsheet,
     Trash2,
@@ -6,6 +6,7 @@ import {
     Eye,
     Loader2,
     AlertCircle,
+    XCircle,
 } from 'lucide-react';
 import { useAppStore } from '../../store/AppContext';
 import { WorkerManager } from '../../utils/WorkerManager';
@@ -13,7 +14,7 @@ import FileUploader from '../../components/FileUploader';
 import TanStackDataTable from '../../components/TanStackDataTable';
 
 const ExcelCsvConverter: React.FC = () => {
-    const { state, setExcelCsv } = useAppStore();
+    const { state, setExcelCsv, setTaskStatus } = useAppStore();
     const { file, tableData, totalRows, fileName, isDirty, isParsing } = state.excelCsv;
 
     const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,15 @@ const ExcelCsvConverter: React.FC = () => {
         }
     }, []);
 
+    useEffect(() => {
+        return () => {
+            excelWorkerRef.current?.terminate();
+            excelWorkerRef.current = null;
+            csvWorkerRef.current?.terminate();
+            csvWorkerRef.current = null;
+        };
+    }, []);
+
     const handleFileSelect = async (selectedFile: File) => {
         setExcelCsv({ file: selectedFile, fileName: selectedFile.name, isDirty: false });
         setError(null);
@@ -47,7 +57,16 @@ const ExcelCsvConverter: React.FC = () => {
 
         setExcelCsv({ isParsing: true });
         setError(null);
+        setTaskStatus({ state: 'running', label: 'Preparing preview' });
+        excelWorkerRef.current?.cancelAll('Superseded by a newer preview request');
+        csvWorkerRef.current?.cancelAll('Superseded by a newer preview request');
         initWorkers();
+
+        // Add timeout protection
+        const timeoutId = setTimeout(() => {
+            setExcelCsv({ isParsing: false });
+            setError('Processing timeout - file may be too large or corrupted. Try a smaller file.');
+        }, 30000); // 30 second timeout
 
         try {
             const extension = file.name.split('.').pop()?.toLowerCase();
@@ -58,9 +77,14 @@ const ExcelCsvConverter: React.FC = () => {
                     data: buffer,
                     type: 'excel-to-json',
                     options: { flatten: true }
-                }, [buffer]);
+                }, [buffer], 0);
 
                 const data = Array.isArray(result.data) ? result.data : [result.data];
+
+                if (!data || data.length === 0) {
+                    throw new Error('No data found in Excel file');
+                }
+
                 setExcelCsv({
                     tableData: data.slice(0, 1000),
                     totalRows: data.length,
@@ -70,9 +94,14 @@ const ExcelCsvConverter: React.FC = () => {
                 const result = await csvWorkerRef.current!.postMessage('CONVERT_CSV', {
                     data: buffer,
                     type: 'csv-to-json'
-                }, [buffer]);
+                }, [buffer], 0);
 
                 const data = Array.isArray(result) ? result : [result];
+
+                if (!data || data.length === 0) {
+                    throw new Error('No data found in CSV file');
+                }
+
                 setExcelCsv({
                     tableData: data.slice(0, 1000),
                     totalRows: data.length,
@@ -81,9 +110,14 @@ const ExcelCsvConverter: React.FC = () => {
             } else {
                 throw new Error('Unsupported file format. Please upload XLSX or CSV.');
             }
+
+            clearTimeout(timeoutId);
+            setTaskStatus({ state: 'done', label: 'Preview ready' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(err instanceof Error ? err.message : 'Failed to parse file');
             setExcelCsv({ isParsing: false });
+            setTaskStatus({ state: 'error', label: 'Preview failed' });
         }
     };
 
@@ -92,7 +126,16 @@ const ExcelCsvConverter: React.FC = () => {
 
         setIsLoading(true);
         setError(null);
+        setTaskStatus({ state: 'running', label: `Exporting ${saveMode.toUpperCase()}` });
+        excelWorkerRef.current?.cancelAll('Superseded by a newer export request');
+        csvWorkerRef.current?.cancelAll('Superseded by a newer export request');
         initWorkers();
+
+        // Add timeout protection for export
+        const timeoutId = setTimeout(() => {
+            setIsLoading(false);
+            setError('Export timeout - file may be too large. Try exporting fewer rows.');
+        }, 60000); // 60 second timeout
 
         try {
             const baseName = fileName.split('.')[0];
@@ -102,7 +145,7 @@ const ExcelCsvConverter: React.FC = () => {
                 const result = await csvWorkerRef.current!.postMessage('CONVERT_CSV', {
                     data: JSON.stringify(tableData),
                     type: 'json-to-csv'
-                });
+                }, undefined, 0);
 
                 const blob = new Blob([result], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -117,7 +160,7 @@ const ExcelCsvConverter: React.FC = () => {
                 const result = await excelWorkerRef.current!.postMessage('CONVERT_EXCEL', {
                     data: JSON.stringify(tableData),
                     type: 'json-to-excel'
-                });
+                }, undefined, 0);
 
                 const blob = new Blob([result.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                 const url = URL.createObjectURL(blob);
@@ -129,14 +172,21 @@ const ExcelCsvConverter: React.FC = () => {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             }
+
+            clearTimeout(timeoutId);
+            setTaskStatus({ state: 'done', label: 'Export complete' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(err instanceof Error ? err.message : 'Export failed');
+            setTaskStatus({ state: 'error', label: 'Export failed' });
         } finally {
             setIsLoading(false);
         }
     };
 
     const handleClear = () => {
+        excelWorkerRef.current?.cancelAll('Cleared by user');
+        csvWorkerRef.current?.cancelAll('Cleared by user');
         setExcelCsv({
             file: null,
             tableData: [],
@@ -147,6 +197,14 @@ const ExcelCsvConverter: React.FC = () => {
         });
         setError(null);
     };
+
+    const handleCancelCurrentTask = useCallback(() => {
+        excelWorkerRef.current?.cancelAll('Cancelled by user');
+        csvWorkerRef.current?.cancelAll('Cancelled by user');
+        setExcelCsv({ isParsing: false });
+        setIsLoading(false);
+        setTaskStatus({ state: 'cancelled', label: 'Operation cancelled' });
+    }, [setExcelCsv, setTaskStatus]);
 
     return (
         <div className="h-full flex flex-col space-y-6">
@@ -184,6 +242,12 @@ const ExcelCsvConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
+                    {(isParsing || isLoading) && (
+                        <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
+                            <XCircle className="w-4 h-4 text-red-500" />
+                            <span className="text-sm font-bold">Cancel</span>
+                        </button>
+                    )}
                     <button
                         onClick={handleSave}
                         disabled={isLoading || tableData.length === 0}
@@ -234,7 +298,7 @@ const ExcelCsvConverter: React.FC = () => {
                 </div>
 
                 {/* Right Panel: Viewport */}
-                <div className="flex-1 flex flex-col space-y-4 min-h-0">
+                <div className="flex-1 flex flex-col space-y-4 min-h-0 min-w-0">
                     <div className="flex items-center justify-between px-1">
                         <div>
                             <h2 className="text-xl font-bold text-gray-900 tracking-tight">

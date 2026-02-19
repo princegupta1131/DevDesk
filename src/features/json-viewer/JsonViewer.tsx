@@ -1,21 +1,46 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from 'react';
 import {
     Upload,
     FileJson,
     Search,
     AlertCircle,
-    Loader2,
     Trash2,
     ChevronDown,
     ChevronRight,
     Wand2,
+    Copy,
+    Check,
+    XCircle,
 } from 'lucide-react';
-import Editor from '@monaco-editor/react';
+import { motion } from 'framer-motion';
 import { WorkerManager } from '../../utils/WorkerManager';
-import VirtualizedJsonTree from '../../components/VirtualizedJsonTree';
-import type { ParseError } from '../../types/json';
-import { formatFileSize } from '../../utils/jsonUtils';
+import type { JsonNode } from '../../types/json';
+import { copyToClipboard, formatFileSize } from '../../utils/jsonUtils';
 import { useAppStore } from '../../store/AppContext';
+import AppLoader from '../../components/AppLoader';
+import { logger } from '../../utils/logger';
+
+const MonacoEditor = lazy(() => import('@monaco-editor/react'));
+const VirtualizedJsonTree = lazy(() => import('../../components/VirtualizedJsonTree'));
+type JsonSearchResult = { paths: string[]; count: number };
+
+const containerMotion = {
+    hidden: { opacity: 0, y: 8 },
+    show: {
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.28, ease: 'easeOut' as const },
+    },
+};
+
+const sectionMotion = {
+    hidden: { opacity: 0, y: 10 },
+    show: {
+        opacity: 1,
+        y: 0,
+        transition: { duration: 0.26, ease: 'easeOut' as const },
+    },
+};
 
 /**
  * JSON Structure Viewer Component
@@ -46,7 +71,7 @@ import { useAppStore } from '../../store/AppContext';
  * ```
  */
 const JsonViewer: React.FC = () => {
-    const { state, setJsonViewer } = useAppStore();
+    const { state, setJsonViewer, setTaskStatus } = useAppStore();
     const { jsonInput, jsonTree, error, fileInfo, isDirectMode, rawFile } = state.jsonViewer;
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -54,19 +79,28 @@ const JsonViewer: React.FC = () => {
     const [expandAll, setExpandAll] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [searchCount, setSearchCount] = useState<number | null>(null);
-    const [processingCount, setProcessingCount] = useState<number>(0);
     const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set(['root']));
+    const [isCopied, setIsCopied] = useState(false);
 
-    const workerRef = useRef<WorkerManager<any, any> | null>(null);
+    const workerRef = useRef<WorkerManager<unknown, unknown> | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const parseSeqRef = useRef(0);
+    const searchSeqRef = useRef(0);
 
     // Initialize worker once
     const initWorker = useCallback(() => {
         if (!workerRef.current) {
-            workerRef.current = new WorkerManager<any, any>(
+            workerRef.current = new WorkerManager<unknown, unknown>(
                 () => new Worker(new URL('../../workers/jsonParser.worker.ts', import.meta.url), { type: 'module' })
             );
         }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+            workerRef.current = null;
+        };
     }, []);
 
     // Stable Parse Handler
@@ -83,13 +117,15 @@ const JsonViewer: React.FC = () => {
         const sourceInput = input !== undefined ? input : jsonInput;
         const sourceFile = file !== undefined ? file : rawFile;
         const sourceDirect = directMode !== undefined ? directMode : isDirectMode;
+        const requestId = ++parseSeqRef.current;
 
         if (!sourceInput.trim() && !sourceFile) {
             return;
         }
 
+        workerRef.current?.cancelAll('Superseded by a newer parse request');
         setIsLoading(true);
-        setProcessingCount(0);
+        setTaskStatus({ state: 'running', label: 'Parsing JSON' });
         setJsonViewer({ error: null });
 
         setTimeout(async () => {
@@ -114,21 +150,27 @@ const JsonViewer: React.FC = () => {
                     transfer,
                     0,
                     (progressData) => {
-                        setProcessingCount(progressData.nodesProcessed);
+                        void progressData;
                     }
-                );
+                ) as JsonNode;
+                if (requestId !== parseSeqRef.current) return;
                 setJsonViewer({ jsonTree: result, error: null });
-            } catch (err: any) {
-                const parseError = typeof err === 'object' && err.message
-                    ? (err as ParseError)
+                setTaskStatus({ state: 'done', label: 'JSON parsed' });
+            } catch (err: unknown) {
+                if (requestId !== parseSeqRef.current) return;
+                if (WorkerManager.isCancelledError(err)) return;
+                const parseError = err instanceof Error
+                    ? { message: err.message, lineNumber: null }
                     : { message: String(err), lineNumber: null };
                 setJsonViewer({ jsonTree: null, error: parseError });
+                setTaskStatus({ state: 'error', label: 'JSON parse failed' });
             } finally {
-                setIsLoading(false);
-                setProcessingCount(0);
+                if (requestId === parseSeqRef.current) {
+                    setIsLoading(false);
+                }
             }
         }, 0);
-    }, [jsonInput, rawFile, isDirectMode, initWorker, setJsonViewer]);
+    }, [jsonInput, rawFile, isDirectMode, initWorker, setJsonViewer, setTaskStatus]);
 
     // Handle Search
     useEffect(() => {
@@ -139,14 +181,24 @@ const JsonViewer: React.FC = () => {
             return;
         }
 
+        const searchId = ++searchSeqRef.current;
         initWorker();
-        workerRef.current!.postMessage('SEARCH_JSON', {
-            tree: jsonTree,
-            query: debouncedSearchQuery
-        }, undefined, 150).then((result: any) => {
-            setExpandedPaths(new Set(['root', ...result.paths]));
-            setSearchCount(result.count);
-        });
+        workerRef.current!.postMessage('SEARCH_JSON', debouncedSearchQuery, undefined, 150)
+            .then((result) => {
+                if (searchId !== searchSeqRef.current) return;
+                const searchResult = result as JsonSearchResult;
+                const paths = Array.isArray(searchResult?.paths) ? searchResult.paths : [];
+                const count = typeof searchResult?.count === 'number' ? searchResult.count : 0;
+                setExpandedPaths(new Set(['root', ...paths]));
+                setSearchCount(count);
+            })
+            .catch((err: unknown) => {
+                if (searchId !== searchSeqRef.current) return;
+                if (!WorkerManager.isCancelledError(err)) {
+                    logger.error('Search failed:', err);
+                    setSearchCount(0);
+                }
+            });
     }, [debouncedSearchQuery, jsonTree, initWorker]);
 
     // Debounce search input
@@ -154,13 +206,6 @@ const JsonViewer: React.FC = () => {
         const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 300);
         return () => clearTimeout(timer);
     }, [searchQuery]);
-
-    // Auto-parse on mount or when jsonInput changes (if not in direct mode)
-    useEffect(() => {
-        if (!jsonInput.trim() || isDirectMode) return;
-        const timer = setTimeout(() => handleParse(), 1000);
-        return () => clearTimeout(timer);
-    }, [jsonInput, isDirectMode, handleParse]);
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -181,11 +226,8 @@ const JsonViewer: React.FC = () => {
             reader.onload = (e) => {
                 const content = e.target?.result as string;
                 setJsonViewer({ jsonInput: content });
-                handleParse(content, null, false);
             };
             reader.readAsText(file);
-        } else {
-            handleParse('', file, true);
         }
     };
 
@@ -195,128 +237,244 @@ const JsonViewer: React.FC = () => {
             const content = (rawFile && isDirectMode) ? await rawFile.text() : jsonInput;
             const formatted = JSON.stringify(JSON.parse(content), null, 2);
             setJsonViewer({ jsonInput: formatted, isDirectMode: false, rawFile: null, error: null });
-        } catch (err: any) {
-            setJsonViewer({ error: { message: 'Invalid JSON: ' + err.message, lineNumber: null } });
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setJsonViewer({ error: { message: `Invalid JSON: ${message}`, lineNumber: null } });
         }
     };
 
     const handleClear = () => {
+        if (isLoading) {
+            setTaskStatus({ state: 'cancelled', label: 'JSON parse cancelled' });
+        }
+        parseSeqRef.current += 1;
+        workerRef.current?.cancelAll('Cleared by user');
         setJsonViewer({
             jsonInput: '', jsonTree: null, error: null, fileInfo: null,
             isDirectMode: false, rawFile: null
         });
         setSearchQuery('');
         setSearchCount(null);
+        searchSeqRef.current += 1;
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
+    const handleCopyJson = useCallback(async () => {
+        let content = jsonInput;
+        if (!content.trim() && rawFile) {
+            content = await rawFile.text();
+        }
+        if (!content.trim()) return;
+
+        const copied = await copyToClipboard(content);
+        if (copied) {
+            setIsCopied(true);
+            window.setTimeout(() => setIsCopied(false), 1400);
+        }
+    }, [jsonInput, rawFile]);
+
+    const handleCancelCurrentTask = useCallback(() => {
+        parseSeqRef.current += 1;
+        workerRef.current?.cancelAll('Cancelled by user');
+        setIsLoading(false);
+        setTaskStatus({ state: 'cancelled', label: 'JSON parse cancelled' });
+    }, [setTaskStatus]);
+
+    const canVisualize = Boolean(jsonInput.trim() || rawFile);
+    const hasTree = Boolean(jsonTree);
+    const approxLineCount = useMemo(() => {
+        if (!jsonInput.trim()) return 0;
+        return jsonInput.split('\n').length;
+    }, [jsonInput]);
+    const approxCharCount = jsonInput.length;
+    const compactMeta = `${approxLineCount.toLocaleString()} Lines • ${approxCharCount.toLocaleString()} Chars`;
+
     return (
-        <div className="h-full flex flex-col space-y-6">
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 min-h-0 overflow-hidden">
-                <div className="flex flex-col space-y-4 min-h-0">
-                    <div className="flex items-center justify-between px-1">
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-900 tracking-tight">Source Data</h2>
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">Input your JSON here</p>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <input ref={fileInputRef} type="file" accept=".json" onChange={handleFileUpload} className="hidden" id="json-file-upload" />
-                            <label htmlFor="json-file-upload" className="btn-secondary h-11 px-5 cursor-pointer">
-                                <Upload className="w-4 h-4" />
-                                <span className="text-sm font-bold">Upload</span>
-                            </label>
-                            <button onClick={handleFormat} className="btn-secondary h-11 px-5">
-                                <Wand2 className="w-4 h-4 text-amber-500" />
-                                <span className="text-sm font-bold">Format</span>
-                            </button>
-                            <button onClick={handleClear} className="btn-secondary h-11 px-5">
-                                <Trash2 className="w-4 h-4" />
-                                <span className="text-sm font-bold">Reset</span>
-                            </button>
-                            <button onClick={() => handleParse()} disabled={isLoading || (!jsonInput.trim() && !rawFile)} className="btn-primary-gradient h-11 px-6">
-                                {isLoading ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        <span className="text-sm">{processingCount > 0 ? `Processed ${processingCount.toLocaleString()}...` : 'Analyzing...'}</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <FileJson className="w-4 h-4" />
-                                        <span className="text-sm">Visualize</span>
-                                    </>
-                                )}
-                            </button>
-                        </div>
+        <motion.div
+            initial="hidden"
+            animate="show"
+            variants={containerMotion}
+            className="h-full min-h-0 flex flex-col gap-2 sm:gap-3 premium-pattern-bg rounded-2xl p-2 sm:p-3 border border-slate-200/70 shadow-[0_14px_34px_rgba(15,23,42,0.05)]"
+        >
+            <motion.div variants={sectionMotion} className="flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-[11px] font-semibold bg-white/85 border border-slate-200/80 px-2 py-0.5 rounded-md text-slate-600 shrink-0">
+                        {compactMeta}
+                    </span>
+                    {fileInfo && <span className="text-[11px] font-semibold bg-indigo-50/90 border border-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md shrink-0">{formatFileSize(fileInfo.size)}</span>}
+                </div>
+                <span className="hidden md:inline text-[11px] font-semibold text-slate-400 shrink-0">Client-side processing</span>
+            </motion.div>
+
+            <div className="flex-1 grid grid-cols-1 xl:grid-cols-2 gap-3 sm:gap-4 min-h-0 overflow-hidden">
+                <motion.section variants={sectionMotion} className="flex flex-col gap-2 min-h-0 min-w-0">
+                    <div className="flex items-end justify-between px-1 h-8">
+                        <h2 className="text-lg font-bold text-slate-900 leading-none tracking-tight">Source JSON</h2>
                     </div>
 
-                    <div className="flex-1 flex flex-col premium-card overflow-hidden">
+                    <div className="premium-card p-2.5 flex items-center justify-between gap-2 ring-1 ring-white/40">
+                        <input ref={fileInputRef} type="file" accept=".json" onChange={handleFileUpload} className="hidden" id="json-file-upload" />
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <label htmlFor="json-file-upload" className="btn-secondary h-9 px-3.5 cursor-pointer">
+                                <Upload className="w-4 h-4" />
+                                <span className="text-sm font-semibold">Upload</span>
+                            </label>
+                            <button onClick={handleFormat} className="btn-secondary h-9 px-3.5">
+                                <Wand2 className="w-4 h-4 text-amber-500" />
+                                <span className="text-sm font-semibold">Format</span>
+                            </button>
+                            <button onClick={handleCopyJson} disabled={!canVisualize} className="btn-secondary h-9 px-3.5 disabled:opacity-50">
+                                {isCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                                <span className="text-sm font-semibold">{isCopied ? 'Copied' : 'Copy'}</span>
+                            </button>
+                            <button onClick={handleClear} className="btn-secondary h-9 px-3.5">
+                                <Trash2 className="w-4 h-4" />
+                                <span className="text-sm font-semibold">Reset</span>
+                            </button>
+                        </div>
+                        {isLoading ? (
+                            <button onClick={handleCancelCurrentTask} className="btn-secondary h-9 px-4 shrink-0">
+                                <XCircle className="w-4 h-4 text-red-500" />
+                                <span className="text-sm font-semibold">Cancel</span>
+                            </button>
+                        ) : (
+                            <button onClick={() => handleParse()} disabled={!canVisualize} className="btn-primary-gradient h-9 px-4 shrink-0 disabled:opacity-50">
+                                <FileJson className="w-4 h-4" />
+                                <span className="text-sm font-semibold">Visualize</span>
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="flex-1 premium-card panel-pattern overflow-hidden min-h-0 relative ring-1 ring-white/40">
                         {fileInfo && (
-                            <div className="px-6 py-3 bg-indigo-50/50 border-b border-indigo-100/30 flex justify-between items-center shrink-0">
-                                <div className="flex items-center space-x-2">
-                                    <FileJson className="w-4 h-4 text-indigo-500" />
-                                    <span className="text-xs font-bold text-indigo-700 truncate max-w-[200px]">{fileInfo.name}</span>
-                                    <span className="text-[10px] text-indigo-400 font-bold">({formatFileSize(fileInfo.size)})</span>
+                            <div className="px-4 py-2.5 bg-indigo-50/70 border-b border-indigo-100/80 flex justify-between items-center">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <FileJson className="w-4 h-4 text-indigo-500 shrink-0" />
+                                    <span className="text-xs font-bold text-indigo-700 truncate">{fileInfo.name}</span>
                                 </div>
-                                {isDirectMode && <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest">Turbo Mode</span>}
+                                {isDirectMode && <span className="bg-indigo-600 text-white px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-[0.14em]">Turbo</span>}
                             </div>
                         )}
-                        <div className="flex-1 relative min-h-0">
+
+                        <div className="h-full min-h-0">
                             {isDirectMode ? (
-                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 space-y-6 bg-gray-50/30">
-                                    <div className="w-20 h-20 bg-white rounded-3xl shadow-xl flex items-center justify-center animate-float"><FileJson className="w-10 h-10 text-indigo-500" /></div>
-                                    <div className="text-center max-w-xs px-6">
-                                        <p className="font-bold text-gray-900 text-lg">Large Payload Detected</p>
-                                        <p className="text-sm text-gray-500 mt-2 leading-relaxed">Direct Mode enabled for maximum performance.</p>
+                                <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-4 bg-gradient-to-b from-slate-50/80 to-white/90 p-6">
+                                    <div className="w-16 h-16 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center justify-center">
+                                        <FileJson className="w-8 h-8 text-indigo-500" />
+                                    </div>
+                                    <div className="text-center max-w-sm">
+                                        <p className="font-bold text-gray-900">Large JSON loaded in Direct Mode</p>
+                                        <p className="text-sm text-gray-500 mt-1">Editor rendering is bypassed to keep the app responsive. Click Visualize to parse.</p>
                                     </div>
                                 </div>
                             ) : (
-                                <Editor height="100%" defaultLanguage="json" value={jsonInput} onChange={(v) => setJsonViewer({ jsonInput: v || '' })} theme="light" options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true, padding: { top: 24, bottom: 24 } }} />
+                                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-500">Loading editor...</div>}>
+                                    <MonacoEditor
+                                        height="100%"
+                                        defaultLanguage="json"
+                                        value={jsonInput}
+                                        onChange={(v) => setJsonViewer({ jsonInput: v || '' })}
+                                        theme="light"
+                                        options={{
+                                            minimap: { enabled: false },
+                                            fontSize: 13,
+                                            automaticLayout: true,
+                                            padding: { top: 16, bottom: 16 },
+                                            scrollBeyondLastLine: false
+                                        }}
+                                    />
+                                </Suspense>
                             )}
                         </div>
                     </div>
 
                     {error && (
-                        <div className="bg-red-50 border border-red-100 rounded-2xl p-5 flex items-start space-x-4 animate-in slide-in-from-bottom-2">
-                            <AlertCircle className="w-6 h-6 text-red-600 shrink-0" />
+                        <div className="bg-red-50/95 border border-red-200 rounded-lg p-4 flex items-start gap-3 shadow-sm">
+                            <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
                             <div>
-                                <h3 className="font-bold text-red-900 leading-none mb-1">Syntax Error</h3>
-                                <p className="text-sm text-red-700 leading-relaxed font-medium">{error.message}</p>
+                                <h3 className="font-bold text-red-900 text-sm">Syntax Error</h3>
+                                <p className="text-sm text-red-700 mt-1">{error.message}</p>
                             </div>
                         </div>
                     )}
-                </div>
+                </motion.section>
 
-                <div className="flex flex-col space-y-4 min-h-0">
-                    <div className="flex items-center justify-between px-1">
+                <motion.section variants={sectionMotion} className="flex flex-col gap-2 min-h-0 min-w-0">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between px-1 h-8">
                         <div>
-                            <h2 className="text-xl font-bold text-gray-900 tracking-tight">Structured View</h2>
-                            <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">Interactive Explorer</p>
+                            <h2 className="text-lg font-bold text-slate-900 leading-none tracking-tight">Structured View</h2>
                         </div>
-                        {jsonTree && (
-                            <div className="flex items-center space-x-2">
-                                <div className="relative group">
-                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                    <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search..." className="modern-input h-11 pl-11 py-0 w-56 text-sm" />
-                                    {searchCount !== null && <div className="absolute right-3 top-1/2 -translate-y-1/2"><span className="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-full">{searchCount} matches</span></div>}
+                    </div>
+
+                    <div className="premium-card p-2.5 flex items-center justify-between gap-2 ring-1 ring-white/40">
+                        <div className="flex items-center gap-2 w-full min-w-0">
+                            <div className="relative w-full max-w-[320px]">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Search keys or values..."
+                                    className="modern-input h-9 pl-10 pr-20 w-full text-sm disabled:bg-gray-50"
+                                    disabled={!hasTree}
+                                />
+                                {searchCount !== null && (
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-black bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">
+                                        {searchCount}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <button
+                                onClick={() => setExpandAll(true)}
+                                className="btn-secondary h-9 px-3 disabled:opacity-50"
+                                disabled={!hasTree || (jsonTree?.children?.length || 0) > 2000}
+                                title="Expand all"
+                            >
+                                <ChevronDown className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setExpandAll(false)}
+                                className="btn-secondary h-9 px-3 disabled:opacity-50"
+                                disabled={!hasTree}
+                                title="Collapse all"
+                            >
+                                <ChevronRight className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 premium-card panel-pattern overflow-hidden min-h-0 ring-1 ring-white/40">
+                        <div className="h-full p-3 sm:p-4 min-h-0 relative">
+                            {isLoading && (
+                                <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-sm flex items-center justify-center">
+                                    <AppLoader label="Parsing JSON" size="sm" showBrandText={false} />
                                 </div>
-                                <button onClick={() => setExpandAll(true)} className="btn-secondary h-11 px-4 disabled:opacity-50" disabled={(jsonTree.children?.length || 0) > 2000}><ChevronDown className="w-4 h-4" /></button>
-                                <button onClick={() => setExpandAll(false)} className="btn-secondary h-11 px-4"><ChevronRight className="w-4 h-4" /></button>
-                            </div>
-                        )}
+                            )}
+                            {jsonTree ? (
+                                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-gray-500">Loading structure...</div>}>
+                                    <VirtualizedJsonTree
+                                        data={jsonTree}
+                                        searchQuery={debouncedSearchQuery}
+                                        defaultExpanded={expandAll}
+                                        externalExpandedPaths={expandedPaths}
+                                        onToggle={handleToggle}
+                                    />
+                                </Suspense>
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3 subtle-grid rounded-lg">
+                                    <div className="w-16 h-16 bg-white/90 rounded-2xl flex items-center justify-center border border-slate-200">
+                                        <FileJson className="w-8 h-8 opacity-20" />
+                                    </div>
+                                    <p className="text-sm font-semibold">Structured view will appear here after visualization</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    <div className="flex-1 premium-card p-6 overflow-hidden bg-white/50 relative">
-                        {jsonTree ? (
-                            <VirtualizedJsonTree data={jsonTree} searchQuery={debouncedSearchQuery} defaultExpanded={expandAll} externalExpandedPaths={expandedPaths} onToggle={handleToggle} />
-                        ) : (
-                            <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-4">
-                                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center border border-gray-100"><FileJson className="w-10 h-10 opacity-20" /></div>
-                                <p className="text-sm font-bold tracking-tight">Structured view will appear here</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                </motion.section>
             </div>
-        </div>
+        </motion.div>
     );
 };
 

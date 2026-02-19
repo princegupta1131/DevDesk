@@ -59,18 +59,18 @@ export const Logo: React.FC<LogoProps> = ({ className = "w-10 h-10", showText = 
                 <div className="flex flex-col">
                     <motion.div
                         className="font-bold text-xl sm:text-2xl tracking-tight leading-none text-transparent bg-clip-text bg-gradient-to-r from-gray-900 via-indigo-800 to-gray-900"
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.5 }}
+                        initial={animated ? { opacity: 0, x: -10 } : false}
+                        animate={animated ? { opacity: 1, x: 0 } : undefined}
+                        transition={animated ? { duration: 0.5 } : undefined}
                         style={{ textShadow: '0px 1px 1px rgba(126, 155, 108, 0.1)' }}
                     >
                         DevDesk
                     </motion.div>
                     <motion.p
                         className="text-[10px] sm:text-[11px] font-medium text-indigo-600/80 -mt-0.5"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.2, duration: 0.5 }}
+                        initial={animated ? { opacity: 0 } : false}
+                        animate={animated ? { opacity: 1 } : undefined}
+                        transition={animated ? { delay: 0.2, duration: 0.5 } : undefined}
                     >
                         Diff Checker • Viewer • Converter
                     </motion.p>

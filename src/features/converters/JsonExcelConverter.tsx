@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
     Loader2,
     Trash2,
@@ -8,7 +8,10 @@ import {
     Code,
     Eye,
     Save,
-    FileSpreadsheet
+    FileSpreadsheet,
+    Copy,
+    Check,
+    XCircle
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { WorkerManager } from '../../utils/WorkerManager';
@@ -16,12 +19,13 @@ import FileUploader from '../../components/FileUploader';
 import TanStackDataTable from '../../components/TanStackDataTable';
 import type { ExcelConversionRequest, ExcelConversionResponse } from '../../workers/excel.worker';
 import { useAppStore } from '../../store/AppContext';
+import { copyToClipboard } from '../../utils/jsonUtils';
 
 type ConversionMode = 'json-to-excel' | 'excel-to-json';
 type ViewType = 'json' | 'table';
 
 const JsonExcelConverter: React.FC = () => {
-    const { state, setJsonExcel } = useAppStore();
+    const { state, setJsonExcel, setTaskStatus } = useAppStore();
     const {
         file,
         inputData,
@@ -35,6 +39,7 @@ const JsonExcelConverter: React.FC = () => {
 
     const [resultData, setResultData] = useState<any>(null);
     const [viewType, setViewType] = useState<ViewType>('table');
+    const [isJsonCopied, setIsJsonCopied] = useState(false);
 
     // State setters tied to global store
     const setFile = (val: File | null) => setJsonExcel({ file: val });
@@ -65,6 +70,15 @@ const JsonExcelConverter: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isParsing, setIsParsing] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const jsonPreviewText = useMemo(() => {
+        if (resultData && mode === 'excel-to-json') {
+            return JSON.stringify(resultData, null, 2);
+        }
+        if (tableData.length > 0) {
+            return JSON.stringify(tableData, null, 2);
+        }
+        return '';
+    }, [resultData, mode, tableData]);
 
     const workerRef = useRef<WorkerManager<ExcelConversionRequest, ExcelConversionResponse> | null>(null);
 
@@ -76,6 +90,13 @@ const JsonExcelConverter: React.FC = () => {
         }
     }, []);
 
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+            workerRef.current = null;
+        };
+    }, []);
+
     const validateAndPreview = useCallback(async () => {
         setError(null);
 
@@ -83,6 +104,16 @@ const JsonExcelConverter: React.FC = () => {
             if (!inputData.trim() && !file) {
                 setError('Please enter JSON data or upload a file first');
                 return;
+            }
+
+            // Validate JSON syntax before processing
+            if (!isDirectMode && inputData.trim()) {
+                try {
+                    JSON.parse(inputData);
+                } catch (e) {
+                    setError(`Invalid JSON syntax: ${e instanceof Error ? e.message : 'Please check your JSON format'}`);
+                    return;
+                }
             }
         } else {
             if (!file) {
@@ -92,7 +123,15 @@ const JsonExcelConverter: React.FC = () => {
         }
 
         setIsParsing(true);
+        setTaskStatus({ state: 'running', label: 'Preparing preview' });
+        workerRef.current?.cancelAll('Superseded by a newer preview request');
         initWorker();
+
+        // Add timeout protection
+        const timeoutId = setTimeout(() => {
+            setIsParsing(false);
+            setError('Processing timeout - file may be too large or complex. Try a smaller dataset.');
+        }, 30000); // 30 second timeout
 
         try {
             let data: any;
@@ -109,10 +148,14 @@ const JsonExcelConverter: React.FC = () => {
                 const result = await workerRef.current!.postMessage('PARSE_FOR_PREVIEW', {
                     data,
                     options: { flatten }
-                } as any, transfer);
+                } as any, transfer, 0);
 
                 const previewData = (result as any).data;
                 const total = (result as any).totalRows;
+
+                if (!previewData || !Array.isArray(previewData)) {
+                    throw new Error('Invalid data format received from worker');
+                }
 
                 setTableData(previewData);
                 setTotalRows(total);
@@ -127,21 +170,30 @@ const JsonExcelConverter: React.FC = () => {
                     data,
                     type: 'excel-to-json',
                     options: { flatten }
-                }, transfer);
+                }, transfer, 0);
 
                 const jsonData = result.data;
+                if (!jsonData) {
+                    throw new Error('No data received from Excel file');
+                }
+
                 setResultData(jsonData);
                 setTableData(Array.isArray(jsonData) ? jsonData.slice(0, 1000) : [jsonData]);
                 setTotalRows(Array.isArray(jsonData) ? jsonData.length : 1);
                 setViewType('table');
                 setIsDirty(false);
             }
+
+            clearTimeout(timeoutId);
+            setTaskStatus({ state: 'done', label: 'Preview ready' });
         } catch (e) {
+            if (WorkerManager.isCancelledError(e)) return;
             setError(`Preview failed: ${e instanceof Error ? e.message : 'Invalid data structure'}`);
+            setTaskStatus({ state: 'error', label: 'Preview failed' });
         } finally {
             setIsParsing(false);
         }
-    }, [inputData, file, isDirectMode, flatten, initWorker, mode]);
+    }, [inputData, file, isDirectMode, flatten, initWorker, mode, setTaskStatus]);
 
     const handleFileSelect = async (selectedFile: File) => {
         setFile(selectedFile);
@@ -167,6 +219,7 @@ const JsonExcelConverter: React.FC = () => {
     };
 
     const handleClear = () => {
+        workerRef.current?.cancelAll('Cleared by user');
         setFile(null);
         setInputData('');
         setTableData([]);
@@ -184,7 +237,15 @@ const JsonExcelConverter: React.FC = () => {
 
         setIsLoading(true);
         setError(null);
+        setTaskStatus({ state: 'running', label: mode === 'json-to-excel' ? 'Converting to Excel' : 'Converting to JSON' });
+        workerRef.current?.cancelAll('Superseded by a newer conversion request');
         initWorker();
+
+        // Add timeout protection for conversion
+        const timeoutId = setTimeout(() => {
+            setIsLoading(false);
+            setError('Conversion timeout - file may be too large. Try exporting in smaller batches.');
+        }, 60000); // 60 second timeout for conversion
 
         try {
             let data: any;
@@ -213,7 +274,7 @@ const JsonExcelConverter: React.FC = () => {
                 data,
                 type: mode,
                 options: { flatten }
-            }, transfer);
+            }, transfer, 0);
 
             if (mode === 'json-to-excel') {
                 const blob = new Blob([result.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -244,8 +305,13 @@ const JsonExcelConverter: React.FC = () => {
                 setTotalRows(Array.isArray(jsonData) ? jsonData.length : 1);
                 setViewType('table');
             }
+
+            clearTimeout(timeoutId);
+            setTaskStatus({ state: 'done', label: 'Conversion complete' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(err instanceof Error ? err.message : 'Conversion failed');
+            setTaskStatus({ state: 'error', label: 'Conversion failed' });
         } finally {
             setIsLoading(false);
         }
@@ -255,6 +321,21 @@ const JsonExcelConverter: React.FC = () => {
         setMode(mode === 'json-to-excel' ? 'excel-to-json' : 'json-to-excel');
         handleClear();
     };
+
+    const handleCopyJson = useCallback(async () => {
+        if (!jsonPreviewText) return;
+        const copied = await copyToClipboard(jsonPreviewText);
+        if (!copied) return;
+        setIsJsonCopied(true);
+        window.setTimeout(() => setIsJsonCopied(false), 1200);
+    }, [jsonPreviewText]);
+
+    const handleCancelCurrentTask = useCallback(() => {
+        workerRef.current?.cancelAll('Cancelled by user');
+        setIsParsing(false);
+        setIsLoading(false);
+        setTaskStatus({ state: 'cancelled', label: 'Operation cancelled' });
+    }, [setTaskStatus]);
 
     return (
         <div className="h-full flex flex-col space-y-4 sm:space-y-6">
@@ -286,6 +367,12 @@ const JsonExcelConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
+                    {(isParsing || isLoading) && (
+                        <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
+                            <XCircle className="w-4 h-4 text-red-500" />
+                            <span className="text-sm font-bold">Cancel</span>
+                        </button>
+                    )}
                     <button
                         onClick={handleConvert}
                         disabled={isLoading || tableData.length === 0}
@@ -392,7 +479,7 @@ const JsonExcelConverter: React.FC = () => {
                 </div>
 
                 {/* Right Panel: Viewport */}
-                <div className="flex-1 flex flex-col space-y-3 sm:space-y-4 min-h-0">
+                <div className="flex-1 flex flex-col space-y-3 sm:space-y-4 min-h-0 min-w-0">
                     <div className="flex items-center justify-between px-1">
                         <div>
                             <h2 className="text-xl font-bold text-gray-900 tracking-tight">
@@ -400,22 +487,33 @@ const JsonExcelConverter: React.FC = () => {
                             </h2>
                             <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">Editable Workspace</p>
                         </div>
-                        <div className="bg-gray-100/80 p-1.5 rounded-2xl flex items-center border border-gray-200/50 shadow-inner">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-gray-100/80 p-1.5 rounded-2xl flex items-center border border-gray-200/50 shadow-inner">
+                                <button
+                                    onClick={() => setViewType('table')}
+                                    className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'table' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    <TableIcon className="w-3.5 h-3.5" />
+                                    <span>TABLE</span>
+                                </button>
+                                <button
+                                    onClick={() => setViewType('json')}
+                                    className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'json' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                >
+                                    <Code className="w-3.5 h-3.5" />
+                                    <span>JSON</span>
+                                </button>
+                            </div>
                             <button
-                                onClick={() => setViewType('table')}
-                                className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'table' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
-                                    }`}
+                                onClick={handleCopyJson}
+                                disabled={!jsonPreviewText}
+                                className="btn-secondary h-10 px-4 disabled:opacity-50"
+                                title="Copy transformed JSON"
                             >
-                                <TableIcon className="w-3.5 h-3.5" />
-                                <span>TABLE</span>
-                            </button>
-                            <button
-                                onClick={() => setViewType('json')}
-                                className={`flex items-center space-x-2 px-4 h-9 rounded-xl text-[10px] font-black tracking-[0.15em] transition-all ${viewType === 'json' ? 'bg-white text-indigo-600 shadow-lg' : 'text-gray-500 hover:text-gray-700'
-                                    }`}
-                            >
-                                <Code className="w-3.5 h-3.5" />
-                                <span>JSON</span>
+                                {isJsonCopied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                                <span className="text-xs font-bold">{isJsonCopied ? 'Copied' : 'Copy JSON'}</span>
                             </button>
                         </div>
                     </div>
@@ -459,11 +557,7 @@ const JsonExcelConverter: React.FC = () => {
                                             <span>Displaying head (1,000 records) for low-latency scrolling. Export will contain full dataset.</span>
                                         </div>
                                     )}
-                                    {resultData && mode === 'excel-to-json'
-                                        ? JSON.stringify(resultData, null, 2)
-                                        : tableData.length > 0
-                                            ? JSON.stringify(tableData, null, 2)
-                                            : '// No data transformed yet. Use Compute Table to begin.'}
+                                    {jsonPreviewText || '// No data transformed yet. Use Compute Table to begin.'}
                                 </pre>
                             </div>
                         )}

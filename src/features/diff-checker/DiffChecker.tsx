@@ -1,9 +1,10 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
     GitCompare,
     Loader2,
     Trash2,
-    Settings
+    Settings,
+    XCircle
 } from 'lucide-react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import { WorkerManager } from '../../utils/WorkerManager';
@@ -32,12 +33,14 @@ type DiffMode = 'text' | 'json';
  * @component
  */
 const DiffChecker: React.FC = () => {
-    const { state, setDiffChecker } = useAppStore();
+    const { state, setDiffChecker, setTaskStatus } = useAppStore();
     const { text1, text2, mode, ignoreWhitespace } = state.diffChecker;
 
     const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const leftLines = useMemo(() => text1.split('\n').length, [text1]);
+    const rightLines = useMemo(() => text2.split('\n').length, [text2]);
 
     // Helpers
     const setText1 = (val: string) => setDiffChecker({ text1: val });
@@ -77,6 +80,13 @@ const DiffChecker: React.FC = () => {
         }
     }, []);
 
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+            workerRef.current = null;
+        };
+    }, []);
+
     const handleCompare = useCallback(async () => {
         if (!text1.trim() && !text2.trim()) {
             setError('Please enter text in at least one editor');
@@ -85,6 +95,8 @@ const DiffChecker: React.FC = () => {
 
         setIsLoading(true);
         setError(null);
+        setTaskStatus({ state: 'running', label: 'Computing diff' });
+        workerRef.current?.cancelAll('Superseded by a newer compare request');
         initWorker();
 
         try {
@@ -114,15 +126,19 @@ const DiffChecker: React.FC = () => {
             });
 
             setDiffResult(result);
+            setTaskStatus({ state: 'done', label: 'Diff ready' });
         } catch (err) {
+            if (WorkerManager.isCancelledError(err)) return;
             setError(err instanceof Error ? err.message : 'Failed to compute diff');
             setDiffResult(null);
+            setTaskStatus({ state: 'error', label: 'Diff failed' });
         } finally {
             setIsLoading(false);
         }
-    }, [text1, text2, mode, ignoreWhitespace, state.diffChecker.sortKeys, initWorker, setDiffChecker]);
+    }, [text1, text2, mode, ignoreWhitespace, state.diffChecker.sortKeys, initWorker, setDiffChecker, setTaskStatus]);
 
     const handleClear = () => {
+        workerRef.current?.cancelAll('Cleared by user');
         setText1('');
         setText2('');
         setDiffResult(null);
@@ -135,124 +151,123 @@ const DiffChecker: React.FC = () => {
         setText2(temp);
     };
 
-    return (
-        <div className="h-full flex flex-col bg-white">
-            {/* Header */}
-            <div className="border-b border-gray-200 p-6">
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                    Diff Checker
-                </h1>
-                <p className="text-gray-600">
-                    Compare text or JSON with side-by-side highlighting
-                </p>
-            </div>
+    const handleCancelCurrentTask = useCallback(() => {
+        workerRef.current?.cancelAll('Cancelled by user');
+        setIsLoading(false);
+        setTaskStatus({ state: 'cancelled', label: 'Diff cancelled' });
+    }, [setTaskStatus]);
 
-            {/* Controls */}
-            <div className="border-b border-gray-200 p-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4">
-                        {/* Mode Toggle */}
-                        <div className="flex items-center space-x-2">
-                            <span className="text-sm font-medium text-gray-700">Mode:</span>
-                            <div className="flex bg-gray-100 rounded-lg p-1">
+    return (
+        <div className="h-full min-h-0 flex flex-col gap-3">
+            <div className="premium-card p-3 sm:p-4 shrink-0">
+                <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">Diff Checker</h1>
+                            <p className="text-xs text-slate-500 mt-0.5">Compare plain text or JSON with a fast side-by-side view.</p>
+                        </div>
+                        <div className="hidden sm:flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                            <span className="bg-slate-100 px-2 py-1 rounded">Left {leftLines} lines</span>
+                            <span className="bg-slate-100 px-2 py-1 rounded">Right {rightLines} lines</span>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-700">Mode</span>
+                            <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200/80">
                                 <button
                                     onClick={() => setMode('text')}
-                                    className={`px-3 py-1 text-sm rounded transition-colors ${mode === 'text'
-                                        ? 'bg-white text-primary-700 font-medium shadow-sm'
-                                        : 'text-gray-600 hover:text-gray-900'
+                                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${mode === 'text'
+                                        ? 'bg-white text-indigo-700 font-semibold shadow-sm border border-indigo-100'
+                                        : 'text-slate-600 hover:text-slate-900'
                                         }`}
                                 >
                                     Text
                                 </button>
                                 <button
                                     onClick={() => setMode('json')}
-                                    className={`px-3 py-1 text-sm rounded transition-colors ${mode === 'json'
-                                        ? 'bg-white text-primary-700 font-medium shadow-sm'
-                                        : 'text-gray-600 hover:text-gray-900'
+                                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${mode === 'json'
+                                        ? 'bg-white text-indigo-700 font-semibold shadow-sm border border-indigo-100'
+                                        : 'text-slate-600 hover:text-slate-900'
                                         }`}
                                 >
                                     JSON
                                 </button>
                             </div>
-                        </div>
-
-                        {/* Options */}
-                        <div className="flex items-center space-x-4">
-                            <label className="flex items-center space-x-2 cursor-pointer">
+                            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 ml-1 bg-white border border-slate-200 rounded-lg px-3 h-9">
                                 <input
                                     type="checkbox"
                                     checked={ignoreWhitespace}
                                     onChange={(e) => setIgnoreWhitespace(e.target.checked)}
-                                    className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                    className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
                                 />
-                                <span className="text-sm text-gray-700">Ignore whitespace</span>
+                                <span>Ignore whitespace</span>
                             </label>
                             {mode === 'json' && (
-                                <label className="flex items-center space-x-2 cursor-pointer">
+                                <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 h-9">
                                     <input
                                         type="checkbox"
                                         checked={state.diffChecker.sortKeys || false}
                                         onChange={(e) => setDiffChecker({ sortKeys: e.target.checked })}
-                                        className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
                                     />
-                                    <span className="text-sm text-gray-700">Sort JSON Keys</span>
+                                    <span>Sort keys</span>
                                 </label>
                             )}
                         </div>
-                    </div>
-
-                    {/* Action Buttons */}
-                    <div className="flex items-center space-x-2">
-                        <button
-                            onClick={handleSwap}
-                            className="btn-outline flex items-center space-x-2"
-                            title="Swap left and right"
-                        >
-                            <GitCompare className="w-4 h-4" />
-                            <span>Swap</span>
-                        </button>
-                        <button
-                            onClick={handleClear}
-                            className="btn-secondary"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            <span>Reset</span>
-                        </button>
-                        <button
-                            onClick={handleCompare}
-                            disabled={isLoading}
-                            className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {isLoading ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>Computing...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <GitCompare className="w-4 h-4" />
-                                    <span>Compare</span>
-                                </>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                onClick={handleSwap}
+                                className="btn-outline h-9 px-3"
+                                title="Swap left and right"
+                            >
+                                <GitCompare className="w-4 h-4" />
+                                <span>Swap</span>
+                            </button>
+                            <button onClick={handleClear} className="btn-secondary h-9 px-3">
+                                <Trash2 className="w-4 h-4" />
+                                <span>Reset</span>
+                            </button>
+                            {isLoading && (
+                                <button onClick={handleCancelCurrentTask} className="btn-secondary h-9 px-3 border-red-200 text-red-700">
+                                    <XCircle className="w-4 h-4 text-red-500" />
+                                    <span>Cancel</span>
+                                </button>
                             )}
-                        </button>
+                            <button
+                                onClick={handleCompare}
+                                disabled={isLoading}
+                                className="btn-primary h-9 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {isLoading ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span>Computing</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <GitCompare className="w-4 h-4" />
+                                        <span>Compare</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Main Content */}
-            <div className="flex-1 overflow-hidden bg-gray-50/50">
+            <div className="flex-1 min-h-0 overflow-hidden premium-card">
                 {!diffResult ? (
-                    /* Input Mode */
-                    <div className="h-full grid grid-cols-2 gap-6 p-6 min-h-0">
-                        {/* Left Editor */}
-                        <div className="flex flex-col space-y-3 min-h-0">
-                            <div className="flex items-center justify-between px-1">
-                                <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Original Content</h2>
-                                <span className="text-[10px] font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
-                                    {text1.split('\n').length} LINES
+                    <div className="h-full grid grid-cols-1 xl:grid-cols-2 gap-3 p-3 min-h-0">
+                        <div className="flex flex-col space-y-2 min-h-0">
+                            <div className="flex items-center justify-between px-1.5">
+                                <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.18em]">Original Content</h2>
+                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded">
+                                    {leftLines} lines
                                 </span>
                             </div>
-                            <div className="flex-1 min-h-0 border-2 border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+                            <div className="flex-1 min-h-0 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
                                 <Editor
                                     height="100%"
                                     language={mode === 'json' ? 'json' : 'plaintext'}
@@ -264,15 +279,14 @@ const DiffChecker: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Right Editor */}
-                        <div className="flex flex-col space-y-3 min-h-0">
-                            <div className="flex items-center justify-between px-1">
-                                <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Modified Content</h2>
-                                <span className="text-[10px] font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
-                                    {text2.split('\n').length} LINES
+                        <div className="flex flex-col space-y-2 min-h-0">
+                            <div className="flex items-center justify-between px-1.5">
+                                <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.18em]">Modified Content</h2>
+                                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded">
+                                    {rightLines} lines
                                 </span>
                             </div>
-                            <div className="flex-1 min-h-0 border-2 border-gray-200 rounded-2xl overflow-hidden bg-white shadow-sm">
+                            <div className="flex-1 min-h-0 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
                                 <Editor
                                     height="100%"
                                     language={mode === 'json' ? 'json' : 'plaintext'}
@@ -285,16 +299,15 @@ const DiffChecker: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                    /* Diff View */
                     <div className="h-full flex flex-col min-h-0">
-                        <div className="p-4 border-b border-gray-200 bg-white flex items-center justify-between">
+                        <div className="px-3 py-2.5 border-b border-slate-200 bg-white/90 flex items-center justify-between">
                             <div className="flex items-center space-x-2">
-                                <GitCompare className="w-5 h-5 text-primary-600" />
-                                <h2 className="text-sm font-bold text-gray-900 uppercase tracking-tight">Comparison Result</h2>
+                                <GitCompare className="w-5 h-5 text-indigo-600" />
+                                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tight">Comparison Result</h2>
                             </div>
                             <button
                                 onClick={() => setDiffResult(null)}
-                                className="btn-secondary h-8 px-4 text-xs font-bold"
+                                className="btn-secondary h-8 px-3 text-xs font-bold"
                             >
                                 BACK TO EDIT
                             </button>
@@ -313,11 +326,10 @@ const DiffChecker: React.FC = () => {
                 )}
             </div>
 
-            {/* Error Display */}
             {error && (
-                <div className="border-t border-gray-200 p-4 bg-red-50">
+                <div className="border border-red-200 px-3 py-2 bg-red-50 rounded-md">
                     <div className="flex items-center space-x-2 text-red-700">
-                        <Settings className="w-5 h-5" />
+                        <Settings className="w-4 h-4" />
                         <span className="text-sm font-medium">{error}</span>
                     </div>
                 </div>
