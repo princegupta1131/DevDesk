@@ -321,6 +321,12 @@ const JsonExcelConverter: React.FC = () => {
         }, 60000); // 60 second timeout for conversion
 
         try {
+            const timestamp = Date.now();
+            const sourceBaseName = file?.name
+                ? file.name.replace(/\.[^/.]+$/, '')
+                : mode === 'json-to-excel'
+                    ? 'json_data'
+                    : 'excel_data';
             let data: any;
             let transfer: Transferable[] | undefined;
 
@@ -357,7 +363,7 @@ const JsonExcelConverter: React.FC = () => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `exported_${Date.now()}.xlsx`;
+                a.download = `${sourceBaseName}_converted_${timestamp}.xlsx`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -370,7 +376,7 @@ const JsonExcelConverter: React.FC = () => {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `converted_${Date.now()}.json`;
+                a.download = `${sourceBaseName}_converted_${timestamp}.json`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -388,6 +394,7 @@ const JsonExcelConverter: React.FC = () => {
             perfMark('json-excel-export-complete');
             perfMeasure('json-excel-export-total', 'json-excel-export-start', 'json-excel-export-complete');
             clearTimeout(timeoutId);
+            setIsDirty(false);
             setTaskStatus({ state: 'done', label: 'Conversion complete' });
         } catch (err) {
             if (WorkerManager.isCancelledError(err)) return;
@@ -423,6 +430,9 @@ const JsonExcelConverter: React.FC = () => {
         ? Boolean(localInputData.trim() || file)
         : Boolean(file);
     const canRunPreview = canPreview && !previewSafeModeActive;
+    const hasSourceInput = mode === 'json-to-excel'
+        ? Boolean(localInputData.trim() || file)
+        : Boolean(file);
 
     return (
         <div className="h-full flex flex-col space-y-4 sm:space-y-6">
@@ -454,14 +464,6 @@ const JsonExcelConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
-                    <button
-                        onClick={validateAndPreview}
-                        disabled={isParsing || isLoading || !canRunPreview}
-                        className="btn-secondary h-11 px-5 disabled:opacity-50"
-                    >
-                        {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                        <span className="text-sm font-bold">Open Preview & Edit</span>
-                    </button>
                     {(isParsing || isLoading) && (
                         <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
                             <XCircle className="w-4 h-4 text-red-500" />
@@ -478,20 +480,13 @@ const JsonExcelConverter: React.FC = () => {
                     </button>
                 </div>
             </div>
-            <div className="mx-1 -mt-1 rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 shadow-sm">
-                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-indigo-700">Workflow</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="rounded-full bg-indigo-600 text-white px-3 py-1 font-bold">
-                        1. {mode === 'json-to-excel' ? 'Convert & Export Excel' : 'Convert & Export JSON'}
-                    </span>
-                    <span className="rounded-full bg-white border border-indigo-200 text-indigo-700 px-3 py-1 font-semibold">2. Open Preview & Edit (if needed)</span>
-                </div>
-                <p className="mt-2 text-xs text-slate-700">
-                    Fastest path is direct export. Open preview only when you need to validate or edit rows.
+            <div className="mx-1 -mt-1 flex items-center justify-between gap-3">
+                <p className="text-xs text-slate-600">
+                    Default: use <span className="font-semibold text-slate-800">{mode === 'json-to-excel' ? 'Convert & Export Excel' : 'Convert & Export JSON'}</span>. Open preview only when you need to review.
                 </p>
                 {previewSafeModeActive && (
-                    <p className="mt-2 text-xs text-amber-700 font-semibold">
-                        Safe Mode active: preview is disabled for this large file to keep the app responsive.
+                    <p className="text-xs text-amber-700 font-semibold whitespace-nowrap">
+                        Safe Mode: preview disabled for large files.
                     </p>
                 )}
             </div>
@@ -550,18 +545,10 @@ const JsonExcelConverter: React.FC = () => {
                                         currentFile={file}
                                         compact
                                     />
-                                    <button
-                                        onClick={validateAndPreview}
-                                        disabled={isParsing || !canRunPreview}
-                                        className="btn-primary h-11 w-full bg-indigo-600 hover:bg-indigo-700"
-                                    >
-                                        {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                                        <span className="text-sm">Open Preview & Edit</span>
-                                    </button>
                                 </div>
                             </div>
                         ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-6">
+                            <div className="flex-1 flex flex-col items-center justify-start p-6 sm:p-8 gap-5 overflow-y-auto">
                                 <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center animate-float">
                                     <FileSpreadsheet className="w-10 h-10 text-indigo-600" />
                                 </div>
@@ -575,16 +562,6 @@ const JsonExcelConverter: React.FC = () => {
                                     onClear={() => setFile(null)}
                                     currentFile={file}
                                 />
-                                {file && (
-                                    <button
-                                        onClick={validateAndPreview}
-                                        disabled={isParsing || !canRunPreview}
-                                        className="btn-primary h-12 w-full mt-4 shadow-indigo-200"
-                                    >
-                                        {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                                        <span className="text-sm">Open Preview & Edit</span>
-                                    </button>
-                                )}
                             </div>
                         )}
                     </div>
@@ -674,26 +651,47 @@ const JsonExcelConverter: React.FC = () => {
                                     />
                                 ) : (
                                     <div className="h-full flex items-center justify-center p-6">
-                                        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white/85 p-5 shadow-sm">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-11 h-11 bg-slate-50 rounded-xl flex items-center justify-center border border-slate-200">
-                                                    <TableIcon className="w-5 h-5 text-slate-500" />
+                                        <div className="w-full max-w-lg rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-indigo-50/40 p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-slate-200 shadow-sm">
+                                                    <TableIcon className="w-5 h-5 text-indigo-600" />
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-bold text-slate-900">No preview opened</p>
-                                                    <p className="text-xs text-slate-600">Convert directly, or review before export.</p>
+                                                    <p className="text-base font-bold text-slate-900 tracking-tight">No preview opened</p>
+                                                    <p className="text-sm text-slate-600">Convert directly, or review before export.</p>
                                                 </div>
                                             </div>
-                                            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                                                    <p className="font-semibold text-emerald-800">Default action</p>
-                                                    <p className="text-emerald-700">Use Convert & Export</p>
+                                            {!hasSourceInput ? (
+                                                <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                                    <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3">
+                                                        <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Default action</p>
+                                                        <p className="mt-1 font-semibold text-slate-800">Use Convert & Export</p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3">
+                                                        <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Before exporting</p>
+                                                        <p className="mt-1 font-semibold text-slate-800">Open Preview & Edit if needed</p>
+                                                    </div>
                                                 </div>
-                                                <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
-                                                    <p className="font-semibold text-indigo-800">Before exporting</p>
-                                                    <p className="text-indigo-700">Open Preview & Edit if needed</p>
+                                            ) : (
+                                                <div className="mt-5 flex flex-wrap gap-3">
+                                                    <button
+                                                        onClick={handleConvert}
+                                                        disabled={isLoading}
+                                                        className="btn-primary h-10 px-5 disabled:opacity-50"
+                                                    >
+                                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                                        <span className="text-sm font-semibold">{mode === 'json-to-excel' ? 'Convert & Export Excel' : 'Convert & Export JSON'}</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={validateAndPreview}
+                                                        disabled={isParsing || isLoading || !canRunPreview}
+                                                        className="btn-secondary h-10 px-5 disabled:opacity-50"
+                                                    >
+                                                        {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                                                        <span className="text-sm font-semibold">Open Preview & Edit</span>
+                                                    </button>
                                                 </div>
-                                            </div>
+                                            )}
                                         </div>
                                     </div>
                                 )}

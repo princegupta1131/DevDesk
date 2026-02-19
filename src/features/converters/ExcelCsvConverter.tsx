@@ -319,6 +319,7 @@ const ExcelCsvConverter: React.FC = () => {
             perfMark('excel-csv-export-complete');
             perfMeasure('excel-csv-export-total', 'excel-csv-export-start', 'excel-csv-export-complete');
             clearTimeout(timeoutId);
+            setExcelCsv({ isDirty: false });
             setTaskStatus({ state: 'done', label: 'Export complete' });
         } catch (err) {
             if (WorkerManager.isCancelledError(err)) return;
@@ -355,6 +356,7 @@ const ExcelCsvConverter: React.FC = () => {
     }, [setExcelCsv, setTaskStatus]);
 
     const canPreview = Boolean(file) && !previewSafeModeActive;
+    const hasSourceInput = Boolean(file);
 
     return (
         <div className="h-full flex flex-col space-y-6">
@@ -392,14 +394,6 @@ const ExcelCsvConverter: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                         <span className="text-sm font-bold">Reset</span>
                     </button>
-                    <button
-                        onClick={handlePreview}
-                        disabled={!canPreview || isParsing || isLoading}
-                        className="btn-secondary h-11 px-5 disabled:opacity-50"
-                    >
-                        {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                        <span className="text-sm font-bold">Open Preview & Edit</span>
-                    </button>
                     {(isParsing || isLoading) && (
                         <button onClick={handleCancelCurrentTask} className="btn-secondary h-11 px-5">
                             <XCircle className="w-4 h-4 text-red-500" />
@@ -416,33 +410,26 @@ const ExcelCsvConverter: React.FC = () => {
                     </button>
                 </div>
             </div>
-            <div className="mx-1 -mt-2 rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-3 shadow-sm">
-                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-indigo-700">Workflow</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="rounded-full bg-indigo-600 text-white px-3 py-1 font-bold">1. Convert & Export</span>
-                    <span className="rounded-full bg-white border border-indigo-200 text-indigo-700 px-3 py-1 font-semibold">2. Open Preview & Edit (if needed)</span>
-                </div>
-                <p className="mt-2 text-xs text-slate-700">
-                    Fastest path is direct export. Open preview only when you need to validate or edit rows.
-                </p>
+            <div className="mx-1 -mt-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-slate-600">Default: use <span className="font-semibold text-slate-800">Convert & Export</span>. Open preview only when you need to review.</p>
                 {previewSafeModeActive && (
-                    <p className="mt-2 text-xs text-amber-700 font-semibold">
-                        Safe Mode active: preview is disabled for this large file to keep the app responsive.
+                    <p className="text-xs text-amber-700 font-semibold whitespace-nowrap">
+                        Safe Mode: preview disabled for large files.
                     </p>
                 )}
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex overflow-hidden min-h-0 gap-8">
+            <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0 gap-4 sm:gap-6 lg:gap-8">
                 {/* Left Panel: Source */}
-                <div className="w-[320px] flex flex-col space-y-4 min-h-0">
+                <div className="w-full lg:w-[320px] flex flex-col space-y-4 min-h-0">
                     <div>
                         <h2 className="text-xl font-bold text-gray-900 tracking-tight">Source</h2>
                         <p className="text-xs text-gray-500 font-medium uppercase tracking-widest mt-0.5">Input Spreadsheet</p>
                     </div>
 
                     <div className="flex-1 flex flex-col premium-card overflow-hidden">
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-6">
+                        <div className="flex-1 flex flex-col items-center justify-start p-6 sm:p-8 gap-5 overflow-y-auto">
                             <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center animate-float">
                                 <FileSpreadsheet className="w-10 h-10 text-indigo-600" />
                             </div>
@@ -456,16 +443,6 @@ const ExcelCsvConverter: React.FC = () => {
                                 onClear={() => setExcelCsv({ file: null })}
                                 currentFile={file}
                             />
-                            {file && (
-                                <button
-                                    onClick={handlePreview}
-                                    disabled={!canPreview || isParsing || isLoading}
-                                    className="btn-primary h-12 w-full mt-4 shadow-indigo-200"
-                                >
-                                    {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
-                                    <span className="text-sm">Open Preview & Edit</span>
-                                </button>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -529,26 +506,47 @@ const ExcelCsvConverter: React.FC = () => {
                                 />
                             ) : (
                                 <div className="h-full flex items-center justify-center p-6">
-                                    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white/85 p-5 shadow-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-11 h-11 bg-slate-50 rounded-xl flex items-center justify-center border border-slate-200">
-                                                <FileSpreadsheet className="w-5 h-5 text-slate-500" />
+                                    <div className="w-full max-w-lg rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white via-slate-50 to-indigo-50/40 p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center border border-slate-200 shadow-sm">
+                                                <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
                                             </div>
                                             <div>
-                                                <p className="text-sm font-bold text-slate-900">No preview opened</p>
-                                                <p className="text-xs text-slate-600">Convert directly, or review before export.</p>
+                                                <p className="text-base font-bold text-slate-900 tracking-tight">No preview opened</p>
+                                                <p className="text-sm text-slate-600">Convert directly, or review before export.</p>
                                             </div>
                                         </div>
-                                        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                                                <p className="font-semibold text-emerald-800">Default action</p>
-                                                <p className="text-emerald-700">Use Convert & Export</p>
+                                        {!hasSourceInput ? (
+                                            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                                <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3">
+                                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Default action</p>
+                                                    <p className="mt-1 font-semibold text-slate-800">Use Convert & Export</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3">
+                                                    <p className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">Before exporting</p>
+                                                    <p className="mt-1 font-semibold text-slate-800">Open Preview & Edit if needed</p>
+                                                </div>
                                             </div>
-                                            <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
-                                                <p className="font-semibold text-indigo-800">Before exporting</p>
-                                                <p className="text-indigo-700">Open Preview & Edit if needed</p>
+                                        ) : (
+                                            <div className="mt-5 flex flex-wrap gap-3">
+                                                <button
+                                                    onClick={handleSave}
+                                                    disabled={isLoading || !file}
+                                                    className="btn-primary h-10 px-5 disabled:opacity-50"
+                                                >
+                                                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                                                    <span className="text-sm font-semibold">Convert & Export</span>
+                                                </button>
+                                                <button
+                                                    onClick={handlePreview}
+                                                    disabled={!canPreview || isParsing || isLoading}
+                                                    className="btn-secondary h-10 px-5 disabled:opacity-50"
+                                                >
+                                                    {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+                                                    <span className="text-sm font-semibold">Open Preview & Edit</span>
+                                                </button>
                                             </div>
-                                        </div>
+                                        )}
                                     </div>
                                 </div>
                             )}

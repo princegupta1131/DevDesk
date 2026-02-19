@@ -81,6 +81,13 @@ const Layout: React.FC = () => {
     const { enabled: draftsEnabled, setEnabled: setDraftsEnabled } = useDraftPreference();
     const isWideWorkspace = location.pathname === '/app/json-viewer' || location.pathname === '/app/diff-checker';
     const preloadedRoutesRef = React.useRef<Set<string>>(new Set());
+    const hasUnsavedConverterEdits = state.excelCsv.isDirty || state.jsonExcel.isDirty || state.jsonCsv.isDirty;
+
+    const confirmNavigationIfNeeded = React.useCallback((targetPath: string) => {
+        if (targetPath === location.pathname) return true;
+        if (!hasUnsavedConverterEdits) return true;
+        return window.confirm('You have unsaved table edits. If you switch menu, those edits will be lost. Continue?');
+    }, [hasUnsavedConverterEdits, location.pathname]);
 
     const preloadRoute = React.useCallback((path: string) => {
         if (preloadedRoutesRef.current.has(path)) return;
@@ -142,7 +149,11 @@ const Layout: React.FC = () => {
                 <div className="absolute bottom-[-5rem] right-1/4 w-[22rem] h-[22rem] rounded-full bg-slate-200/20 blur-[110px]" />
             </div>
             {/* Command Palette */}
-            <CommandPalette open={open} onOpenChange={setOpen} />
+            <CommandPalette
+                open={open}
+                onOpenChange={setOpen}
+                beforeNavigate={confirmNavigationIfNeeded}
+            />
             {/* Sidebar */}
             <aside
                 className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
@@ -151,7 +162,15 @@ const Layout: React.FC = () => {
                 <div className="flex flex-col h-full">
                     {/* Header */}
                     <div className="p-6 border-b border-slate-200/80">
-                        <Link to="/" className="block">
+                        <Link
+                            to="/"
+                            className="block"
+                            onClick={(e) => {
+                                if (!confirmNavigationIfNeeded('/')) {
+                                    e.preventDefault();
+                                }
+                            }}
+                        >
                             <Logo
                                 className="w-10 h-10 sm:w-11 sm:h-11 shadow-xl shadow-indigo-500/20"
                                 showText={true}
@@ -174,7 +193,13 @@ const Layout: React.FC = () => {
                                             <Link
                                                 key={item.id}
                                                 to={item.path}
-                                                onClick={() => setSidebarOpen(false)}
+                                                onClick={(e) => {
+                                                    if (!confirmNavigationIfNeeded(item.path)) {
+                                                        e.preventDefault();
+                                                        return;
+                                                    }
+                                                    setSidebarOpen(false);
+                                                }}
                                                 onMouseEnter={() => preloadRoute(item.path)}
                                                 onFocus={() => preloadRoute(item.path)}
                                                 onTouchStart={() => preloadRoute(item.path)}

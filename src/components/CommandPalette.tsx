@@ -21,15 +21,20 @@ import {
 interface CommandPaletteProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
+    beforeNavigate?: (path: string) => boolean;
 }
 
-export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export function CommandPalette({ open, onOpenChange, beforeNavigate }: CommandPaletteProps) {
     const navigate = useNavigate();
 
-    const runCommand = React.useCallback((command: () => void) => {
+    const runCommand = React.useCallback((path: string, command: () => void) => {
+        if (beforeNavigate && !beforeNavigate(path)) {
+            onOpenChange(false);
+            return;
+        }
         onOpenChange(false);
         command();
-    }, [onOpenChange]);
+    }, [beforeNavigate, onOpenChange]);
 
     return (
         <CommandDialog open={open} onOpenChange={onOpenChange}>
@@ -38,7 +43,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <CommandEmpty>No results found.</CommandEmpty>
                 <CommandGroup heading="Navigation">
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/'))}
+                        onSelect={() => runCommand('/', () => navigate('/'))}
                     >
                         <Home className="mr-2 h-4 w-4" />
                         <span>Home</span>
@@ -47,25 +52,25 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <CommandSeparator />
                 <CommandGroup heading="Converters">
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/json-csv'))}
+                        onSelect={() => runCommand('/app/json-csv', () => navigate('/app/json-csv'))}
                     >
                         <FileJson className="mr-2 h-4 w-4" />
                         <span>JSON ↔ CSV Converter</span>
                     </CommandItem>
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/json-excel'))}
+                        onSelect={() => runCommand('/app/json-excel', () => navigate('/app/json-excel'))}
                     >
                         <FileSpreadsheet className="mr-2 h-4 w-4" />
                         <span>JSON ↔ Excel Converter</span>
                     </CommandItem>
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/excel-csv'))}
+                        onSelect={() => runCommand('/app/excel-csv', () => navigate('/app/excel-csv'))}
                     >
                         <FileSpreadsheet className="mr-2 h-4 w-4" />
                         <span>Excel ↔ CSV Converter</span>
                     </CommandItem>
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/word-pdf'))}
+                        onSelect={() => runCommand('/app/word-pdf', () => navigate('/app/word-pdf'))}
                     >
                         <FileText className="mr-2 h-4 w-4" />
                         <span>Word ↔ PDF Converter</span>
@@ -74,13 +79,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <CommandSeparator />
                 <CommandGroup heading="Tools">
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/json-viewer'))}
+                        onSelect={() => runCommand('/app/json-viewer', () => navigate('/app/json-viewer'))}
                     >
                         <Code className="mr-2 h-4 w-4" />
                         <span>JSON Viewer</span>
                     </CommandItem>
                     <CommandItem
-                        onSelect={() => runCommand(() => navigate('/app/diff-checker'))}
+                        onSelect={() => runCommand('/app/diff-checker', () => navigate('/app/diff-checker'))}
                     >
                         <GitCompare className="mr-2 h-4 w-4" />
                         <span>Diff Checker</span>
